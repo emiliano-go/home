@@ -303,7 +303,7 @@ export function SimpleAgentForm({ defaultAgent, providers, saving, error, onSave
           <div className="placeholder-icon">
             <Icon name="alert" size={18} />
           </div>
-          <div className="placeholder-title">No providers configured</div>
+          <div className="error-banner">No providers configured</div>
           <div className="placeholder-hint">
             Add a provider and API key first, then come back to pick your agent.
           </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api.js'
+import { Modal } from '../components/Modal.jsx'
 import { SectionEmpty, Skeleton, Spinner } from '../components/primitives.jsx'
 import { Icon } from '../icons.jsx'
 import { relDate } from '../lib/format.js'
@@ -13,34 +14,8 @@ export function reminderDue(value) {
 export function RemindersView({ projects }) {
   const { data, error, loading, reload } = useAsync(() => api.listReminders(false), [])
   const reminders = data || []
-  const [text, setText] = useState('')
-  const [due, setDue] = useState('')
-  const [recurrence, setRecurrence] = useState('none')
-  const [projectId, setProjectId] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [editor, setEditor] = useState(false)
   const [formError, setFormError] = useState(null)
-
-  const add = (e) => {
-    e.preventDefault()
-    if (!text.trim() || !due) return
-    setSaving(true)
-    setFormError(null)
-    api
-      .createReminder({
-        text: text.trim(),
-        due_at: new Date(due).toISOString(),
-        recurrence,
-        project_id: projectId ? Number(projectId) : null,
-      })
-      .then(() => {
-        setText('')
-        setDue('')
-        setRecurrence('none')
-        reload()
-      })
-      .catch((err) => setFormError(err.message || String(err)))
-      .finally(() => setSaving(false))
-  }
 
   const act = (fn) => {
     setFormError(null)
@@ -52,8 +27,13 @@ export function RemindersView({ projects }) {
   return (
     <div className="center-col wide">
       <div className="page-head">
-        <h2>Reminders</h2>
-        <span className="muted">notifications fire when due</span>
+        <div className="page-head-title">
+          <h2>Reminders</h2>
+          <p className="note">Notifications fire when due.</p>
+        </div>
+        <button className="btn primary" onClick={() => setEditor(true)}>
+          <Icon name="plus" size={14} /> New reminder
+        </button>
       </div>
       {error && <p className="error-text">{error}</p>}
       {formError && <p className="error-text">{formError}</p>}
@@ -68,7 +48,7 @@ export function RemindersView({ projects }) {
         <SectionEmpty
           icon="clock"
           title="No reminders"
-          hint="Ask the agent to remind you, or add one below."
+          hint="Ask the agent to remind you, or create one."
         />
       ) : (
         <div className="home-list">
@@ -106,11 +86,48 @@ export function RemindersView({ projects }) {
         </div>
       )}
 
-      <form className="docs-card" onSubmit={add}>
-        <div className="docs-head">
-          <Icon name="plus" size={15} />
-          <span>New reminder</span>
-        </div>
+      {editor && (
+        <ReminderEditor
+          projects={projects}
+          onClose={() => setEditor(false)}
+          onSaved={() => {
+            setEditor(false)
+            reload()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+export function ReminderEditor({ projects, onClose, onSaved }) {
+  const [text, setText] = useState('')
+  const [due, setDue] = useState('')
+  const [recurrence, setRecurrence] = useState('none')
+  const [projectId, setProjectId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  const add = (e) => {
+    e.preventDefault()
+    if (!text.trim() || !due) return
+    setSaving(true)
+    setFormError(null)
+    api
+      .createReminder({
+        text: text.trim(),
+        due_at: new Date(due).toISOString(),
+        recurrence,
+        project_id: projectId ? Number(projectId) : null,
+      })
+      .then(onSaved)
+      .catch((err) => setFormError(err.message || String(err)))
+      .finally(() => setSaving(false))
+  }
+
+  return (
+    <Modal title="New reminder" onClose={onClose}>
+      <form className="agent-form" onSubmit={add}>
         <div className="field-row">
           <label className="field">
             <span className="field-label">What</span>
@@ -147,8 +164,9 @@ export function RemindersView({ projects }) {
             {saving ? <Spinner size={13} /> : 'Add reminder'}
           </button>
         </div>
+        {formError && <p className="error-text">{formError}</p>}
       </form>
-    </div>
+    </Modal>
   )
 }
 

@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 from hestia.actions import ACTIONS, ACTIONS_BY_KEY, action_defaults
 from hestia.providers.base import REASONING_EFFORTS
 from hestia.registry.db import session
-from hestia.registry.models import ActionDefault, AgentConfig
+from hestia.registry.models import ActionDefault, AgentConfig, Provider
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 actions_router = APIRouter(prefix="/api/actions", tags=["actions"])
@@ -164,6 +164,16 @@ def list_presets():
     return PRESETS
 
 
+def _as_id(value) -> int | None:
+    """Coerce a JSON body id to int (the web UI sends select values as strings)."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("")
 def list_agents(s: Session = Depends(session)):
     return s.exec(select(AgentConfig)).all()
@@ -176,13 +186,16 @@ def create_agent(body: dict, s: Session = Depends(session)):
             raise HTTPException(400, f"{field} is required")
     if s.exec(select(AgentConfig).where(AgentConfig.name == body["name"])).first():
         raise HTTPException(409, f"agent profile already exists: {body['name']}")
+    provider_id = _as_id(body.get("provider_id"))
+    if provider_id is None or not s.get(Provider, provider_id):
+        raise HTTPException(400, "provider not found")
     tools = body.get("tools", "repo,files")
     if isinstance(tools, list):
         tools = ",".join(tools)
     config = AgentConfig(
         name=body["name"],
         system_prompt=body.get("system_prompt", ""),
-        provider_id=body["provider_id"],
+        provider_id=provider_id,
         model=(body.get("model") or "").strip() or None,
         reasoning_effort=_effort(body.get("reasoning_effort")),
         tools=tools,
@@ -205,7 +218,10 @@ def update_agent(agent_id: int, body: dict, s: Session = Depends(session)):
     if "system_prompt" in body:
         config.system_prompt = body["system_prompt"] or ""
     if body.get("provider_id"):
-        config.provider_id = body["provider_id"]
+        provider_id = _as_id(body.get("provider_id"))
+        if provider_id is None or not s.get(Provider, provider_id):
+            raise HTTPException(400, "provider not found")
+        config.provider_id = provider_id
     if "model" in body:
         config.model = (body.get("model") or "").strip() or None
     if "reasoning_effort" in body:
@@ -242,7 +258,7 @@ def list_actions(s: Session = Depends(session)):
 def set_action(key: str, body: dict, s: Session = Depends(session)):
     if key not in ACTIONS_BY_KEY:
         raise HTTPException(404, "unknown action")
-    agent_id = body.get("agent_id")
+    agent_id = _as_id(body.get("agent_id"))
     if agent_id is not None and not s.get(AgentConfig, agent_id):
         raise HTTPException(400, "agent profile not found")
     row = s.get(ActionDefault, key)

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api.js'
+import { Modal } from '../components/Modal.jsx'
 import { SectionEmpty, Skeleton, Spinner } from '../components/primitives.jsx'
 import { Icon } from '../icons.jsx'
 import { relDate, truncate } from '../lib/format.js'
@@ -11,37 +12,9 @@ export const WATCH_KIND_LABEL = { page: 'Page', feed: 'Feed', condition: 'Condit
 export function WatchesView({ projects }) {
   const { data, error, loading, reload } = useAsync(api.listWatches, [])
   const watches = data || []
-  const [kind, setKind] = useState('page')
-  const [url, setUrl] = useState('')
-  const [condition, setCondition] = useState('')
-  const [notifyOn, setNotifyOn] = useState('change')
-  const [interval, setIntervalMinutes] = useState(60)
-  const [projectId, setProjectId] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [editor, setEditor] = useState(false)
   const [formError, setFormError] = useState(null)
   const [checking, setChecking] = useState(null)
-
-  const add = (e) => {
-    e.preventDefault()
-    setSaving(true)
-    setFormError(null)
-    api
-      .createWatch({
-        kind,
-        url: kind === 'condition' && !url.trim() ? null : url.trim() || null,
-        condition: condition.trim(),
-        notify_on: notifyOn,
-        interval_minutes: Number(interval),
-        project_id: projectId ? Number(projectId) : null,
-      })
-      .then(() => {
-        setUrl('')
-        setCondition('')
-        reload()
-      })
-      .catch((err) => setFormError(err.message || String(err)))
-      .finally(() => setSaving(false))
-  }
 
   const act = (fn) => {
     setFormError(null)
@@ -61,8 +34,13 @@ export function WatchesView({ projects }) {
   return (
     <div className="center-col wide">
       <div className="page-head">
-        <h2>Watches</h2>
-        <span className="muted">notify only when something happens</span>
+        <div className="page-head-title">
+          <h2>Watches</h2>
+          <p className="note">Notify only when something happens.</p>
+        </div>
+        <button className="btn primary" onClick={() => setEditor(true)}>
+          <Icon name="plus" size={14} /> New watch
+        </button>
       </div>
       {error && <p className="error-text">{error}</p>}
       {formError && <p className="error-text">{formError}</p>}
@@ -77,7 +55,7 @@ export function WatchesView({ projects }) {
         <SectionEmpty
           icon="refresh"
           title="No watches"
-          hint="Watch a page, an RSS feed, or a condition. Ask the agent, or add one below."
+          hint="Watch a page, an RSS feed, or a condition. Ask the agent, or create one."
         />
       ) : (
         <div className="home-list">
@@ -117,11 +95,51 @@ export function WatchesView({ projects }) {
         </div>
       )}
 
-      <form className="docs-card" onSubmit={add}>
-        <div className="docs-head">
-          <Icon name="plus" size={15} />
-          <span>New watch</span>
-        </div>
+      {editor && (
+        <WatchEditor
+          projects={projects}
+          onClose={() => setEditor(false)}
+          onSaved={() => {
+            setEditor(false)
+            reload()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+export function WatchEditor({ projects, onClose, onSaved }) {
+  const [kind, setKind] = useState('page')
+  const [url, setUrl] = useState('')
+  const [condition, setCondition] = useState('')
+  const [notifyOn, setNotifyOn] = useState('change')
+  const [interval, setIntervalMinutes] = useState(60)
+  const [projectId, setProjectId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  const add = (e) => {
+    e.preventDefault()
+    setSaving(true)
+    setFormError(null)
+    api
+      .createWatch({
+        kind,
+        url: kind === 'condition' && !url.trim() ? null : url.trim() || null,
+        condition: condition.trim(),
+        notify_on: notifyOn,
+        interval_minutes: Number(interval),
+        project_id: projectId ? Number(projectId) : null,
+      })
+      .then(onSaved)
+      .catch((err) => setFormError(err.message || String(err)))
+      .finally(() => setSaving(false))
+  }
+
+  return (
+    <Modal title="New watch" onClose={onClose}>
+      <form className="agent-form" onSubmit={add}>
         <div className="field-row">
           <label className="field">
             <span className="field-label">Kind</span>
@@ -183,7 +201,8 @@ export function WatchesView({ projects }) {
             {saving ? <Spinner size={13} /> : 'Add watch'}
           </button>
         </div>
+        {formError && <p className="error-text">{formError}</p>}
       </form>
-    </div>
+    </Modal>
   )
 }

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { version as APP_VERSION } from '../package.json'
 import { api } from './api.js'
 import { AgentsPage } from './agents/AgentsPage.jsx'
 import { Modal } from './components/Modal.jsx'
@@ -53,6 +54,10 @@ export default function App() {
   const [prevOpenedAt, setPrevOpenedAt] = useState(undefined)
   const [authState, setAuthState] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // Which project's dropdown is currently expanded. Only one open at a time.
+  const [expandedId, setExpandedId] = useState(null)
+  // Cache sessions per project so collapsed projects don't refetch on expand.
+  const [sessionsByProject, setSessionsByProject] = useState({})
 
   useEffect(() => {
     api
@@ -123,8 +128,45 @@ export default function App() {
   )
   const sessions = sessionsReq.data || []
 
+  // Keep the sessions cache in sync for the active project.
+  useEffect(() => {
+    if (effectiveProjectId && sessionsReq.data) {
+      setSessionsByProject((prev) =>
+        prev[effectiveProjectId] === sessionsReq.data
+          ? prev
+          : { ...prev, [effectiveProjectId]: sessionsReq.data }
+      )
+    }
+  }, [effectiveProjectId, sessionsReq.data])
+
+  // Auto-expand the active project. Only one dropdown open at a time.
+  const userCollapsedRef = useRef(null)
+  useEffect(() => {
+    if (effectiveProjectId && userCollapsedRef.current !== effectiveProjectId) {
+      setExpandedId(effectiveProjectId)
+    }
+  }, [effectiveProjectId])
+
+  // Lazily load sessions for an expanded (non-active) project.
+  useEffect(() => {
+    if (!expandedId || expandedId === effectiveProjectId) return
+    if (sessionsByProject[expandedId]) return
+    let cancelled = false
+    api
+      .listSessions(expandedId)
+      .then((data) => {
+        if (!cancelled) setSessionsByProject((prev) => ({ ...prev, [expandedId]: data }))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [expandedId, effectiveProjectId, sessionsByProject])
+
   const selectProject = (id) => {
     setProjectId(id)
+    setExpandedId(id)
+    userCollapsedRef.current = null
     setView({ type: 'welcome' })
     setChatSessionId(null)
     setInitialMessage(null)
@@ -133,6 +175,17 @@ export default function App() {
       .openProject(id)
       .then((p) => setPrevOpenedAt(p.previous_opened_at || null))
       .catch(() => setPrevOpenedAt(null))
+  }
+
+  const toggleProject = (id) => {
+    if (expandedId === id) {
+      // Collapse this dropdown; remember so auto-expand doesn't reopen it
+      // until the user navigates to a different project.
+      userCollapsedRef.current = id
+      setExpandedId(null)
+      return
+    }
+    selectProject(id)
   }
 
   const openChat = (sessionId) => {
@@ -180,11 +233,42 @@ export default function App() {
     }
   }, [])
 
-  const startNewChat = () => {
+  // Project-aware navigation used by the per-project dropdowns.
+  const startNewChatFor = (pid) => {
+    if (pid !== effectiveProjectId) {
+      setProjectId(pid)
+      api.openProject(pid).catch(() => {})
+    }
+    setExpandedId(pid)
+    userCollapsedRef.current = null
     setView({ type: 'chat' })
     setChatSessionId(null)
     setInitialMessage(null)
     setChatKey((k) => k + 1)
+  }
+
+  const openChatFor = (pid, sessionId, action) => {
+    if (pid !== effectiveProjectId) {
+      setProjectId(pid)
+      api.openProject(pid).catch(() => {})
+    }
+    setExpandedId(pid)
+    userCollapsedRef.current = null
+    setView({ type: 'chat', action })
+    setChatSessionId(sessionId)
+    setInitialMessage(null)
+  }
+
+  const openProjectViewFor = (pid, type) => {
+    if (pid !== effectiveProjectId) {
+      setProjectId(pid)
+      api.openProject(pid).catch(() => {})
+    }
+    setExpandedId(pid)
+    userCollapsedRef.current = null
+    setView({ type })
+    setChatSessionId(null)
+    setInitialMessage(null)
   }
 
   const startChatWith = (text) => {
@@ -266,6 +350,7 @@ export default function App() {
             <Icon name="flame" size={15} />
           </span>
           <span className="brand-name">Hestia</span>
+          <span className="brand-version">v{APP_VERSION}</span>
         </button>
         <div className="sidebar-scroll">
           <button
@@ -281,160 +366,167 @@ export default function App() {
               <Icon name="plus" size={14} />
             </button>
           </div>
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              className={`sidebar-item ${
-                inProjectView && p.id === effectiveProjectId ? 'active' : ''
-              }`}
-              onClick={() => selectProject(p.id)}
-            >
-              <span className="proj-avatar">{p.name.slice(0, 1)}</span>
-              <span
-                style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}
-              >
-                {p.name}
-              </span>
-            </button>
-          ))}
+          {projects.map((p) => {
+            const isExpanded = expandedId === p.id
+            const isActiveProject = p.id === effectiveProjectId
+            const projectSessions = [...(sessionsByProject[p.id] || (isActiveProject ? sessions : []))]
+              .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+            const navActive = (type) => isActiveProject && view.type === type
+            return (
+              <div key={p.id} className="sidebar-group">
+                <button
+                  className={`sidebar-item sidebar-project ${
+                    inProjectView && isActiveProject ? 'active' : ''
+                  }`}
+                  onClick={() => toggleProject(p.id)}
+                >
+                  <span className="proj-avatar">{p.name.slice(0, 1)}</span>
+                  <span
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}
+                  >
+                    {p.name}
+                  </span>
+                  <Icon
+                    name={isExpanded ? 'chevronDown' : 'chevronRight'}
+                    size={14}
+                    className="si-icon chevron"
+                  />
+                </button>
+                {isExpanded && (
+                  <div className="sidebar-sub">
+                    <button
+                      className={`sidebar-item ${navActive('welcome') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'welcome')}
+                    >
+                      <Icon name="home" size={16} className="si-icon" />
+                      Overview
+                    </button>
+                    <button
+                      className={`sidebar-item ${
+                        isActiveProject && view.type === 'chat' && chatSessionId === null
+                          ? 'active'
+                          : ''
+                      }`}
+                      onClick={() => startNewChatFor(p.id)}
+                    >
+                      <Icon name="plus" size={16} className="si-icon" />
+                      New chat
+                    </button>
+                    {projectSessions.map((s) => (
+                      <button
+                        key={s.id}
+                        className={`sidebar-item ${
+                          isActiveProject && view.type === 'chat' && chatSessionId === s.id
+                            ? 'active'
+                            : ''
+                        }`}
+                        onClick={() =>
+                          openChatFor(
+                            p.id,
+                            s.id,
+                            s.action && s.action !== 'chat' ? s.action : undefined
+                          )
+                        }
+                      >
+                        <Icon name="chat" size={16} className="si-icon" />
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            flex: 1,
+                            textAlign: 'left',
+                          }}
+                        >
+                          {s.title || 'Untitled'}
+                        </span>
+                        <span className="sub">{relDate(s.created_at)}</span>
+                      </button>
+                    ))}
+                    <button
+                      className={`sidebar-item ${navActive('goals') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'goals')}
+                    >
+                      <Icon name="sparkles" size={16} className="si-icon" />
+                      Goals
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('tasks') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'tasks')}
+                    >
+                      <Icon name="tasks" size={16} className="si-icon" />
+                      Tasks
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('roadmap') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'roadmap')}
+                    >
+                      <Icon name="flag" size={16} className="si-icon" />
+                      Roadmap
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('github') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'github')}
+                    >
+                      <Icon name="git" size={16} className="si-icon" />
+                      GitHub
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('activity') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'activity')}
+                    >
+                      <Icon name="clock" size={16} className="si-icon" />
+                      Activity
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('automations') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'automations')}
+                    >
+                      <Icon name="refresh" size={16} className="si-icon" />
+                      Automations
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('files') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'files')}
+                    >
+                      <Icon name="files" size={16} className="si-icon" />
+                      Files
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('memory') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'memory')}
+                    >
+                      <Icon name="memory" size={16} className="si-icon" />
+                      Memory
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('background') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'background')}
+                    >
+                      <Icon name="play" size={16} className="si-icon" />
+                      Background
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('capture') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'capture')}
+                    >
+                      <Icon name="plus" size={16} className="si-icon" />
+                      Capture
+                    </button>
+                    <button
+                      className={`sidebar-item ${navActive('about') ? 'active' : ''}`}
+                      onClick={() => openProjectViewFor(p.id, 'about')}
+                    >
+                      <Icon name="info" size={16} className="si-icon" />
+                      About
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
           {projectsReq.loading && <div className="meta">Loading...</div>}
           {!projectsReq.loading && projects.length === 0 && (
             <div className="meta">No projects yet, click + to add one.</div>
-          )}
-
-          {project && (
-            <div className="sidebar-section">
-              <div className="sidebar-label">
-                <span>{project.name}</span>
-                <button title="New chat" onClick={startNewChat}>
-                  <Icon name="plus" size={14} />
-                </button>
-              </div>
-              <button
-                className={`sidebar-item ${
-                  view.type === 'chat' && chatSessionId === null ? 'active' : ''
-                }`}
-                onClick={startNewChat}
-              >
-                <Icon name="plus" size={16} className="si-icon" />
-                New chat
-              </button>
-              {[...sessions]
-                .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
-                .map((s) => (
-                <button
-                  key={s.id}
-                  className={`sidebar-item ${
-                    view.type === 'chat' && chatSessionId === s.id ? 'active' : ''
-                  }`}
-                  onClick={() => openChat(s.id)}
-                >
-                  <Icon name="chat" size={16} className="si-icon" />
-                  <span
-                    style={{
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      flex: 1,
-                      textAlign: 'left',
-                    }}
-                  >
-                    {s.title || 'Untitled'}
-                  </span>
-                  <span className="sub">{relDate(s.created_at)}</span>
-                </button>
-              ))}
-              <button
-                className={`sidebar-item ${view.type === 'welcome' ? 'active' : ''}`}
-                onClick={() => selectProject(project.id)}
-              >
-                <Icon name="home" size={16} className="si-icon" />
-                Overview
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'goals' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'goals' })}
-              >
-                <Icon name="sparkles" size={16} className="si-icon" />
-                Goals
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'tasks' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'tasks' })}
-              >
-                <Icon name="tasks" size={16} className="si-icon" />
-                Tasks
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'roadmap' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'roadmap' })}
-              >
-                <Icon name="flag" size={16} className="si-icon" />
-                Roadmap
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'github' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'github' })}
-              >
-                <Icon name="git" size={16} className="si-icon" />
-                GitHub
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'activity' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'activity' })}
-              >
-                <Icon name="clock" size={16} className="si-icon" />
-                Activity
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'automations' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'automations' })}
-              >
-                <Icon name="refresh" size={16} className="si-icon" />
-                Automations
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'files' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'files' })}
-              >
-                <Icon name="files" size={16} className="si-icon" />
-                Files
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'repos' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'repos' })}
-              >
-                <Icon name="git" size={16} className="si-icon" />
-                Repositories
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'memory' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'memory' })}
-              >
-                <Icon name="memory" size={16} className="si-icon" />
-                Memory
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'background' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'background' })}
-              >
-                <Icon name="play" size={16} className="si-icon" />
-                Background
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'capture' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'capture' })}
-              >
-                <Icon name="plus" size={16} className="si-icon" />
-                Capture
-              </button>
-              <button
-                className={`sidebar-item ${view.type === 'about' ? 'active' : ''}`}
-                onClick={() => setView({ type: 'about' })}
-              >
-                <Icon name="info" size={16} className="si-icon" />
-                About
-              </button>
-            </div>
           )}
 
           <div className="sidebar-section">

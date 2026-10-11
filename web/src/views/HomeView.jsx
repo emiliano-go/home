@@ -73,6 +73,34 @@ export function LoginView({ status, onAuthed }) {
   )
 }
 
+export function inboxStatus(item) {
+  const text = `${item.title || ''} ${item.subtitle || ''}`.toLowerCase()
+  const isFail = /fail|error|red|timed.?out|cancel|behind|pending pull/.test(text)
+  const isOk = /success|pass|green|completed|merged|resolved|fixed/.test(text)
+  const isPending = /progress|pending|running|queued|waiting|behind|behind origin/.test(text)
+
+  if (item.kind === 'run') {
+    if (isOk && !isFail) return { icon: 'check', tone: 'ok' }
+    if (isPending && !isFail) return { icon: 'clock', tone: 'pending' }
+    return { icon: 'alert', tone: 'fail' }
+  }
+  if (item.kind === 'pull') return { icon: 'refresh', tone: 'pending' }
+  if (item.kind === 'pr') {
+    if (isFail) return { icon: 'git', tone: 'fail' }
+    if (isOk) return { icon: 'check', tone: 'ok' }
+    return { icon: 'git', tone: 'info' }
+  }
+  if (item.kind === 'issue') {
+    if (isFail) return { icon: 'alert', tone: 'fail' }
+    if (isOk) return { icon: 'check', tone: 'ok' }
+    return { icon: 'chat', tone: 'info' }
+  }
+  if (isFail) return { icon: 'alert', tone: 'fail' }
+  if (isOk) return { icon: 'check', tone: 'ok' }
+  if (isPending) return { icon: 'clock', tone: 'pending' }
+  return { icon: 'git', tone: 'info' }
+}
+
 export function InboxCard({ onOpenProject, onStartChat }) {
   const { data, loading, reload } = useAsync(api.listInbox, [])
   const [polling, setPolling] = useState(false)
@@ -133,10 +161,10 @@ export function InboxCard({ onOpenProject, onStartChat }) {
   }
 
   return (
-    <section className="inbox-card">
+    <>
       <div className="inbox-head">
         <h2>
-          <Icon name="alert" size={15} /> Inbox
+          <Icon name="inbox" size={15} /> Inbox
           {unread > 0 && <span className="badge accent">{unread} new</span>}
         </h2>
         <div className="row" style={{ marginBottom: 0 }}>
@@ -150,37 +178,28 @@ export function InboxCard({ onOpenProject, onStartChat }) {
           )}
         </div>
       </div>
+      <section className="inbox-card">
       {actionError && <p className="error-text">{actionError}</p>}
       <div className="home-list">
-        {items.slice(0, 6).map((item) => (
-          <div key={item.id} className="inbox-item">
-            <button
-              className={`home-row inbox-main ${item.read ? '' : 'unread'}`}
-              onClick={() => open(item)}
-            >
-              <span className="home-row-icon">
-                <Icon
-                  name={
-                    item.kind === 'run'
-                      ? 'play'
-                      : item.kind === 'issue'
-                        ? 'chat'
-                        : item.kind === 'pull'
-                          ? 'refresh'
-                          : 'git'
-                  }
-                  size={15}
-                />
+        {items.slice(0, 6).map((item) => {
+          const status = inboxStatus(item)
+          return (
+          <button
+            key={item.id}
+            className={`home-row inbox-item ${item.read ? '' : 'unread'}`}
+            onClick={() => open(item)}
+          >
+            <span className={`home-row-icon status-${status.tone}`}>
+              <Icon name={status.icon} size={15} />
+            </span>
+            <span className="home-row-main">
+              <span className="home-row-title">{item.title}</span>
+              <span className="home-row-sub">
+                {item.project} · {item.subtitle}
               </span>
-              <span className="home-row-main">
-                <span className="home-row-title">{item.title}</span>
-                <span className="home-row-sub">
-                  {item.project} · {item.subtitle}
-                </span>
-              </span>
-              <span className="home-row-time">{relDate(item.created_at)}</span>
-            </button>
-            <div className="inbox-actions">
+            </span>
+            <span className="home-row-time">{relDate(item.created_at)}</span>
+            <span className="inbox-actions" onClick={(e) => e.stopPropagation()}>
               {item.kind === 'pull' ? (
                 <button className="btn primary" disabled={busy === item.id} onClick={() => pull(item)}>
                   {busy === item.id ? (
@@ -210,9 +229,10 @@ export function InboxCard({ onOpenProject, onStartChat }) {
                   )}
                 </button>
               )}
-            </div>
-          </div>
-        ))}
+            </span>
+          </button>
+          )
+        })}
       </div>
       {report && (
         <Modal title={`Triage · ${report.item.title}`} onClose={() => setReport(null)}>
@@ -227,7 +247,8 @@ export function InboxCard({ onOpenProject, onStartChat }) {
           )}
         </Modal>
       )}
-    </section>
+      </section>
+    </>
   )
 }
 

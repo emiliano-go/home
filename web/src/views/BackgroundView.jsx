@@ -38,8 +38,10 @@ export function BackgroundView({ projectId }) {
   return (
     <div className="center-col">
       <div className="page-head">
-        <h2>Background tasks</h2>
-        <span className="muted">detached agent runs; the agent is notified when they finish</span>
+        <div className="page-head-title">
+          <h2>Background tasks</h2>
+          <p className="note">Detached agent runs; the agent is notified when they finish</p>
+        </div>
       </div>
       {error && <p className="error-text">{error}</p>}
       {jobs.length === 0 && <p className="empty">No background tasks yet.</p>}

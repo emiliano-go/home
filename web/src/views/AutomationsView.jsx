@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api.js'
+import { Modal } from '../components/Modal.jsx'
 import { SectionEmpty, Skeleton, Spinner } from '../components/primitives.jsx'
 import { Icon } from '../icons.jsx'
 import { relDate } from '../lib/format.js'
@@ -67,39 +68,9 @@ export function AutomationsView({ projectId }) {
     [projectId]
   )
   const schedules = data || []
-  const [form, setForm] = useState({
-    action: 'github-scan',
-    interval_minutes: 1440,
-    instruction: '',
-    trigger: 'interval',
-    event: 'ci_failure',
-    event_filter: '',
-  })
-  const [saving, setSaving] = useState(false)
-  const [formError, setFormError] = useState(null)
+  const [editor, setEditor] = useState(false)
   const [running, setRunning] = useState(null)
   const [actionError, setActionError] = useState(null)
-
-  const add = (e) => {
-    e.preventDefault()
-    setSaving(true)
-    setFormError(null)
-    api
-      .createSchedule(projectId, form)
-      .then(() => {
-        setForm({
-          action: 'github-scan',
-          interval_minutes: 1440,
-          instruction: '',
-          trigger: 'interval',
-          event: 'ci_failure',
-          event_filter: '',
-        })
-        reload()
-      })
-      .catch((err) => setFormError(err.message || String(err)))
-      .finally(() => setSaving(false))
-  }
 
   const act = (fn) => {
     setActionError(null)
@@ -119,8 +90,13 @@ export function AutomationsView({ projectId }) {
   return (
     <div className="center-col wide">
       <div className="page-head">
-        <h2>Automations</h2>
-        <span className="muted">scheduled agent runs, checked every few minutes</span>
+        <div className="page-head-title">
+          <h2>Automations</h2>
+          <p className="note">Scheduled agent runs, checked every few minutes.</p>
+        </div>
+        <button className="btn primary" onClick={() => setEditor(true)}>
+          <Icon name="plus" size={14} /> New automation
+        </button>
       </div>
 
       {error && <p className="error-text">{error}</p>}
@@ -136,7 +112,7 @@ export function AutomationsView({ projectId }) {
         <SectionEmpty
           icon="clock"
           title="No automations yet"
-          hint="Add a recurring agent run below, or start from a preset."
+          hint="Create a recurring agent run, or start from a preset."
         />
       ) : (
         <div className="sched-list">
@@ -195,11 +171,46 @@ export function AutomationsView({ projectId }) {
         </div>
       )}
 
-      <form className="docs-card" onSubmit={add}>
-        <div className="docs-head">
-          <Icon name="plus" size={15} />
-          <span>New automation</span>
-        </div>
+      {editor && (
+        <AutomationEditor
+          projectId={projectId}
+          onClose={() => setEditor(false)}
+          onSaved={() => {
+            setEditor(false)
+            reload()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+export function AutomationEditor({ projectId, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    action: 'github-scan',
+    interval_minutes: 1440,
+    instruction: '',
+    trigger: 'interval',
+    event: 'ci_failure',
+    event_filter: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  const add = (e) => {
+    e.preventDefault()
+    setSaving(true)
+    setFormError(null)
+    api
+      .createSchedule(projectId, form)
+      .then(onSaved)
+      .catch((err) => setFormError(err.message || String(err)))
+      .finally(() => setSaving(false))
+  }
+
+  return (
+    <Modal title="New automation" onClose={onClose}>
+      <form className="agent-form" onSubmit={add}>
         <div className="row">
           {SCHEDULE_PRESETS.map((p) => (
             <button
@@ -309,6 +320,6 @@ export function AutomationsView({ projectId }) {
         </div>
         {formError && <p className="error-text">{formError}</p>}
       </form>
-    </div>
+    </Modal>
   )
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api.js'
-import { Modal } from '../components/Modal.jsx'
+import { Modal, ConfirmModal } from '../components/Modal.jsx'
 import { ProgressBar, SectionEmpty, Skeleton, Spinner } from '../components/primitives.jsx'
 import { Icon } from '../icons.jsx'
 import { useAsync } from '../lib/hooks.js'
@@ -90,6 +90,7 @@ export function GoalsView({ projectId, onDiscuss, onOpenTasks, onOpenFile }) {
   const [busy, setBusy] = useState(null)
   const [actionError, setActionError] = useState(null)
   const [report, setReport] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
   const act = (goal, kind) => {
     setBusy(goal.id)
@@ -118,22 +119,23 @@ export function GoalsView({ projectId, onDiscuss, onOpenTasks, onOpenFile }) {
   }
 
   const remove = (goal) => {
-    if (!window.confirm(`Delete goal "${goal.title}"? Tasks and milestone stay on the board.`)) return
     api.deleteGoal(goal.id).then(reload).catch((e) => setActionError(e.message))
   }
 
   return (
     <div className="center-col wide">
       <div className="page-head">
-        <h2>Goals</h2>
+        <div className="page-head-title">
+          <h2>Goals</h2>
+          <p className="note">
+            Discuss a goal with the agent, keep a spec in the workspace, then generate a milestone
+            and an ordered task board from it.
+          </p>
+        </div>
         <button className="btn primary" onClick={() => setEditor({})}>
           <Icon name="plus" size={14} /> New goal
         </button>
       </div>
-      <p className="note">
-        Discuss a goal with the agent, keep a spec in the workspace, then generate a milestone
-        and an ordered task board from it.
-      </p>
 
       {error && <p className="error-text">{error}</p>}
       {actionError && <p className="error-text">{actionError}</p>}
@@ -224,7 +226,7 @@ export function GoalsView({ projectId, onDiscuss, onOpenTasks, onOpenFile }) {
                 <button className="btn" onClick={() => setEditor(goal)}>
                   Edit
                 </button>
-                <button className="btn danger" onClick={() => remove(goal)}>
+                <button className="btn danger" onClick={() => setDeleteTarget(goal)}>
                   <Icon name="x" size={13} />
                 </button>
               </div>
@@ -243,6 +245,25 @@ export function GoalsView({ projectId, onDiscuss, onOpenTasks, onOpenFile }) {
             reload()
           }}
         />
+      )}
+
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete goal"
+          confirmLabel="Delete"
+          danger
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            const goal = deleteTarget
+            setDeleteTarget(null)
+            remove(goal)
+          }}
+        >
+          <p className="note">
+            Delete goal <strong>{deleteTarget.title}</strong>? Tasks and milestone stay on the
+            board.
+          </p>
+        </ConfirmModal>
       )}
 
       {report && (

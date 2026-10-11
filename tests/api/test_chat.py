@@ -7,6 +7,85 @@ import pytest
 from tests.api.conftest import _mk_project, _mk_provider
 
 
+def _mk_provider_with_model(client, name, model):
+    return client.post("/api/providers", json={
+        "name": name, "base_url": "http://x", "api_key_env": "K", "model": model,
+    }).json()
+
+
+def _chat_with_fake_client(client, monkeypatch, seen):
+    from hestia.routers import chat as chat_router
+
+    class FakeClient:
+        def __init__(self, provider, model, *args, **kwargs):
+            seen["model"] = model
+
+        async def stream_chat(self, messages, tools=None):
+            yield {"choices": [{"delta": {"content": "ok"}}]}
+
+    monkeypatch.setattr(chat_router, "provider_client", FakeClient)
+
+
+def test_chat_explicit_provider_overrides_default_agent(client, monkeypatch):
+    """With a default agent set, picking another provider must use that provider."""
+    project = _mk_project(client)
+    provider_a = _mk_provider_with_model(client, "pa", "model-a")
+    provider_b = _mk_provider_with_model(client, "pb", "model-b")
+    agent = client.post("/api/agents", json={
+        "name": "default", "provider_id": provider_a["id"],
+    }).json()
+    assert client.put("/api/actions/chat", json={"agent_id": agent["id"]}).status_code == 200
+
+    seen = {}
+    _chat_with_fake_client(client, monkeypatch, seen)
+    resp = client.post(
+        f"/api/projects/{project['id']}/chat",
+        json={"message": "hi", "provider_id": provider_b["id"]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert seen["model"] == "model-b"
+
+
+def test_chat_accepts_string_ids_from_web_ui(client, monkeypatch):
+    """Select values arrive as strings; chat must still resolve them."""
+    project = _mk_project(client)
+    provider = _mk_provider_with_model(client, "p", "model-s")
+    agent = client.post("/api/agents", json={
+        "name": "default", "provider_id": provider["id"],
+    }).json()
+    assert client.put("/api/actions/chat", json={"agent_id": agent["id"]}).status_code == 200
+
+    seen = {}
+    _chat_with_fake_client(client, monkeypatch, seen)
+    resp = client.post(
+        f"/api/projects/{project['id']}/chat",
+        json={"message": "hi", "agent_id": str(agent["id"])},
+    )
+    assert resp.status_code == 200, resp.text
+    assert seen["model"] == "model-s"
+
+
+def test_chat_falls_back_when_agent_provider_deleted(client, monkeypatch):
+    """A stale agent reference (deleted provider) must not brick the chat."""
+    project = _mk_project(client)
+    dead = _mk_provider_with_model(client, "dead", "model-dead")
+    live = _mk_provider_with_model(client, "live", "model-live")
+    agent = client.post("/api/agents", json={
+        "name": "default", "provider_id": dead["id"],
+    }).json()
+    assert client.put("/api/actions/chat", json={"agent_id": agent["id"]}).status_code == 200
+    assert client.delete(f"/api/providers/{dead['id']}").status_code == 204
+
+    seen = {}
+    _chat_with_fake_client(client, monkeypatch, seen)
+    resp = client.post(
+        f"/api/projects/{project['id']}/chat",
+        json={"message": "hi", "provider_id": live["id"]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert seen["model"] == "model-live"
+
+
 def test_chat_goal_action(client, monkeypatch):
     from hestia.routers import chat as chat_router
 

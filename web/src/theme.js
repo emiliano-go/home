@@ -9,6 +9,7 @@ export const DEFAULT_THEME = {
   '--muted': '#8f8d86',
   '--accent': '#d97757',
   '--ok': '#6a9955',
+  '--warn': '#d9a13b',
   '--err': '#e06c5a',
 }
 
@@ -21,6 +22,7 @@ export const LIGHT_THEME = {
   '--muted': '#6f6d66',
   '--accent': '#c96442',
   '--ok': '#4f7a3f',
+  '--warn': '#b45309',
   '--err': '#c0392b',
 }
 
@@ -33,6 +35,7 @@ export const THEME_LABELS = {
   '--muted': 'Muted text',
   '--accent': 'Accent',
   '--ok': 'Success',
+  '--warn': 'Warning',
   '--err': 'Danger',
 }
 
@@ -42,18 +45,121 @@ export const THEME_MODES = [
   ['dark', 'Dark'],
 ]
 
+export const ATOM_ONE_THEME = {
+  '--content-bg': '#282c34',
+  '--sidebar-bg': '#21252b',
+  '--surface': '#2c313a',
+  '--border': '#3e4451',
+  '--fg': '#abb2bf',
+  '--muted': '#7a8292',
+  '--accent': '#61afef',
+  '--ok': '#98c379',
+  '--warn': '#d19a66',
+  '--err': '#e06c75',
+}
+
+export const GITHUB_LIGHT_THEME = {
+  '--content-bg': '#f6f8fa',
+  '--sidebar-bg': '#eaeef2',
+  '--surface': '#ffffff',
+  '--border': '#d0d7de',
+  '--fg': '#1f2328',
+  '--muted': '#59636e',
+  '--accent': '#0969da',
+  '--ok': '#1a7f37',
+  '--warn': '#9a6700',
+  '--err': '#d1242f',
+}
+
+export const NORD_LIGHT_THEME = {
+  '--content-bg': '#eceff4',
+  '--sidebar-bg': '#dfe6ee',
+  '--surface': '#f7f8fa',
+  '--border': '#c8d0dc',
+  '--fg': '#2e3440',
+  '--muted': '#616c80',
+  '--accent': '#4c7199',
+  '--ok': '#4c8a5f',
+  '--warn': '#9a6a2f',
+  '--err': '#b04a55',
+}
+
+export const DRACULA_THEME = {
+  '--content-bg': '#282a36',
+  '--sidebar-bg': '#1e1f2b',
+  '--surface': '#343746',
+  '--border': '#44475a',
+  '--fg': '#f8f8f2',
+  '--muted': '#6272a4',
+  '--accent': '#bd93f9',
+  '--ok': '#50fa7b',
+  '--warn': '#ffb86c',
+  '--err': '#ff5555',
+}
+
+export const TOKYO_NIGHT_THEME = {
+  '--content-bg': '#1a1b26',
+  '--sidebar-bg': '#16161e',
+  '--surface': '#24283b',
+  '--border': '#343a4f',
+  '--fg': '#c0caf5',
+  '--muted': '#565f89',
+  '--accent': '#7aa2f7',
+  '--ok': '#9ece6a',
+  '--warn': '#e0af68',
+  '--err': '#f7768e',
+}
+
+export const GRUVBOX_DARK_THEME = {
+  '--content-bg': '#282828',
+  '--sidebar-bg': '#1d2021',
+  '--surface': '#3c3836',
+  '--border': '#504945',
+  '--fg': '#ebdbb2',
+  '--muted': '#928374',
+  '--accent': '#fe8019',
+  '--ok': '#b8bb26',
+  '--warn': '#fabd2f',
+  '--err': '#fb4934',
+}
+
+export const MATERIAL_LIGHT_THEME = {
+  '--content-bg': '#fef7ff',
+  '--sidebar-bg': '#f3edf7',
+  '--surface': '#ffffff',
+  '--border': '#cac4d0',
+  '--fg': '#1d1b20',
+  '--muted': '#49454f',
+  '--accent': '#6750a4',
+  '--ok': '#2e7d32',
+  '--warn': '#b26a00',
+  '--err': '#b3261e',
+}
+
+export const MATERIAL_DARK_THEME = {
+  '--content-bg': '#121212',
+  '--sidebar-bg': '#1e1e1e',
+  '--surface': '#242424',
+  '--border': '#3a3a3e',
+  '--fg': '#e6e0e9',
+  '--muted': '#938f99',
+  '--accent': '#bb86fc',
+  '--ok': '#66d18c',
+  '--warn': '#ffb74d',
+  '--err': '#cf6679',
+}
+
 export const THEME_PRESETS = {
-  'titan-black': {
-    '--content-bg': '#101018',
-    '--sidebar-bg': '#0c0c14',
-    '--surface': '#1b1b28',
-    '--border': '#2a2a3c',
-    '--fg': '#d4d4e0',
-    '--muted': '#9a9aac',
-    '--accent': '#6ab0cf',
-    '--ok': '#70b090',
-    '--err': '#d06060',
-  },
+  'hestia-light': { label: 'Hestia Light', mode: 'light', palette: LIGHT_THEME },
+  'github-light': { label: 'GitHub Light', mode: 'light', palette: GITHUB_LIGHT_THEME },
+  'nord-light': { label: 'Nord Light', mode: 'light', palette: NORD_LIGHT_THEME },
+  'material-light': { label: 'Material Light', mode: 'light', palette: MATERIAL_LIGHT_THEME },
+  'hestia-dark': { label: 'Hestia Dark', mode: 'dark', palette: DEFAULT_THEME },
+  'atom-one': { label: 'Atom One', mode: 'dark', palette: ATOM_ONE_THEME },
+  'dracula': { label: 'Dracula', mode: 'dark', palette: DRACULA_THEME },
+  'tokyo-night': { label: 'Tokyo Night', mode: 'dark', palette: TOKYO_NIGHT_THEME },
+  'gruvbox-dark': { label: 'Gruvbox Dark', mode: 'dark', palette: GRUVBOX_DARK_THEME },
+  'material-dark': { label: 'Material Dark', mode: 'dark', palette: MATERIAL_DARK_THEME },
 }
 
 export function hexToRgb(hex) {
@@ -173,9 +279,13 @@ export function applyThemeState(state) {
     mode === 'light' ? mixColors(accent, '#000000', 0.08) : mixColors(accent, '#ffffff', 0.12)
   )
   root.setProperty('--accent-soft', rgba(accent, 0.14))
+  root.setProperty('--accent-glow', rgba(accent, 0.3))
   root.setProperty('--ok-soft', rgba(vars['--ok'], 0.14))
+  root.setProperty('--on-ok', readableOn(vars['--ok']))
+  root.setProperty('--warn-soft', rgba(vars['--warn'], 0.14))
   root.setProperty('--err-soft', rgba(vars['--err'], 0.14))
   root.setProperty('--on-accent', readableOn(accent))
+  root.setProperty('--overlay', rgba(mixColors(contentBg, '#000000', 0.6), 0.6))
 
   const meta = document.querySelector('meta[name="theme-color"]')
   if (meta) meta.setAttribute('content', contentBg)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { Composer } from '../components/primitives.jsx'
+import { Composer, SectionEmpty } from '../components/primitives.jsx'
 import { ThinkingBlock, ToolRun, messageItems, pairToolRuns } from '../chat/tools.jsx'
 import { Icon } from '../icons.jsx'
 import { useAsync } from '../lib/hooks.js'
@@ -223,6 +223,11 @@ export function ChatView({ projectId, sessionId, agentId, providerId, onSessionC
     api.stopRun(runId).catch((e) => setError(e.message || String(e)))
   }, [runId])
 
+  const toId = (v) => {
+    const n = parseInt(v, 10)
+    return Number.isFinite(n) ? n : undefined
+  }
+
   const send = useCallback(
     (text) => {
       const trimmed = text.trim()
@@ -254,7 +259,7 @@ export function ChatView({ projectId, sessionId, agentId, providerId, onSessionC
             message: text,
             session_id: sessionRef.current || undefined,
             action: action || undefined,
-            ...(agentId ? { agent_id: agentId } : { provider_id: providerId || undefined }),
+            ...(agentId ? { agent_id: toId(agentId) } : { provider_id: toId(providerId) }),
           },
           {
             onStatus: (s) => gen === streamGenRef.current && setReconnecting(s === 'reconnecting'),
@@ -425,6 +430,16 @@ export function ChatView({ projectId, sessionId, agentId, providerId, onSessionC
       )}
       <div className="chat-scroll" ref={scrollBoxRef} onScroll={onScroll}>
         <div className="chat-inner">
+          {messages.length === 0 &&
+            liveEvents.length === 0 &&
+            !streamingText &&
+            !pending && (
+              <SectionEmpty
+                icon="chat"
+                title="New conversation"
+                hint="Ask anything about this project, or describe a task to get started."
+              />
+            )}
           {messageItems(messages).map((item) =>
             item.kind === 'user' ? (
               <div key={`u-${item.id}`} className="msg user">

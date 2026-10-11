@@ -669,8 +669,9 @@ export function HelpView() {
             briefing, and the web fetch toggle.
           </li>
           <li>
-            <strong>Theme</strong>: tweak every colour. Changes are saved in your browser and
-            applied instantly; <em>Reset to defaults</em> restores the built-in palette.
+            <strong>Theme</strong>: pick a preset (Hestia Light, Hestia Dark, Atom One).
+            A preset also switches the appearance to its light or dark mode;{' '}
+            <em>Reset all</em> restores the defaults.
           </li>
         </ul>
       </Doc>

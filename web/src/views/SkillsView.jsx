@@ -7,32 +7,12 @@ import { useAsync } from '../lib/hooks.js'
 
 export function SkillsView() {
   const { data, loading, error, reload } = useAsync(api.listSkills, [])
-  const [source, setSource] = useState('')
-  const [subpath, setSubpath] = useState('')
-  const [installing, setInstalling] = useState(false)
   const [formError, setFormError] = useState(null)
   const [notice, setNotice] = useState(null)
+  const [installer, setInstaller] = useState(false)
   const [viewing, setViewing] = useState(null)
 
   const skills = data || []
-
-  const install = (e) => {
-    e.preventDefault()
-    if (!source.trim() || installing) return
-    setInstalling(true)
-    setFormError(null)
-    setNotice(null)
-    api
-      .installSkill({ source: source.trim(), subpath: subpath.trim() || undefined })
-      .then((installed) => {
-        setSource('')
-        setSubpath('')
-        setNotice(`Installed ${installed.map((s) => s.name).join(', ')}`)
-        reload()
-      })
-      .catch((err) => setFormError(err.message || String(err)))
-      .finally(() => setInstalling(false))
-  }
 
   const remove = (slug) => {
     api.deleteSkill(slug).then(reload).catch((err) => setFormError(err.message || String(err)))
@@ -48,8 +28,13 @@ export function SkillsView() {
   return (
     <div className="center-col wide">
       <div className="page-head">
-        <h2>Skills</h2>
-        <span className="muted">installable instruction packages for your agents</span>
+        <div className="page-head-title">
+          <h2>Skills</h2>
+          <p className="note">Installable instruction packages for your agents.</p>
+        </div>
+        <button className="btn primary" onClick={() => setInstaller(true)}>
+          <Icon name="plus" size={14} /> New skill
+        </button>
       </div>
       {error && <p className="error-text">{error}</p>}
       {formError && <p className="error-text">{formError}</p>}
@@ -87,46 +72,16 @@ export function SkillsView() {
         </div>
       )}
 
-      <form className="docs-card" onSubmit={install}>
-        <div className="docs-head">
-          <Icon name="plus" size={15} />
-          <span>Install a skill</span>
-        </div>
-        <div className="field-row">
-          <label className="field" style={{ flex: 1 }}>
-            <span className="field-label">Source</span>
-            <input
-              placeholder="owner/repo, npm:package, or https://…tar.gz"
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              disabled={installing}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">Subpath (optional)</span>
-            <input
-              placeholder="skills/pdf"
-              value={subpath}
-              onChange={(e) => setSubpath(e.target.value)}
-              disabled={installing}
-            />
-          </label>
-        </div>
-        <div className="row" style={{ marginBottom: 0 }}>
-          <button className="btn primary" disabled={installing || !source.trim()}>
-            {installing ? (
-              <>
-                <Spinner size={13} /> Installing…
-              </>
-            ) : (
-              'Install'
-            )}
-          </button>
-          <span className="muted skill-hint">
-            GitHub <code>owner/repo</code> · npm <code>npm:pkg</code> · archive URL
-          </span>
-        </div>
-      </form>
+      {installer && (
+        <SkillInstaller
+          onClose={() => setInstaller(false)}
+          onSaved={(installed) => {
+            setInstaller(false)
+            setNotice(`Installed ${installed.map((s) => s.name).join(', ')}`)
+            reload()
+          }}
+        />
+      )}
 
       {viewing && (
         <Modal title={viewing.name} onClose={() => setViewing(null)}>
@@ -134,5 +89,64 @@ export function SkillsView() {
         </Modal>
       )}
     </div>
+  )
+}
+
+function SkillInstaller({ onClose, onSaved }) {
+  const [source, setSource] = useState('')
+  const [subpath, setSubpath] = useState('')
+  const [installing, setInstalling] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  const install = (e) => {
+    e.preventDefault()
+    if (!source.trim() || installing) return
+    setInstalling(true)
+    setFormError(null)
+    api
+      .installSkill({ source: source.trim(), subpath: subpath.trim() || undefined })
+      .then(onSaved)
+      .catch((err) => setFormError(err.message || String(err)))
+      .finally(() => setInstalling(false))
+  }
+
+  return (
+    <Modal title="New skill" onClose={onClose}>
+      <form className="agent-form" onSubmit={install}>
+        <label className="field">
+          <span className="field-label">Source</span>
+          <input
+            placeholder="owner/repo, npm:package, or https://…tar.gz"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            disabled={installing}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Subpath (optional)</span>
+          <input
+            placeholder="skills/pdf"
+            value={subpath}
+            onChange={(e) => setSubpath(e.target.value)}
+            disabled={installing}
+          />
+        </label>
+        <div className="row" style={{ marginBottom: 0 }}>
+          <button className="btn primary" disabled={installing || !source.trim()}>
+            {installing ? (
+              <>
+                <Spinner size={13} /> Installing…
+              </>
+            ) : (
+              'Install skill'
+            )}
+          </button>
+          <span className="muted skill-hint">
+            GitHub <code>owner/repo</code> · npm <code>npm:pkg</code> · archive URL
+          </span>
+        </div>
+        {formError && <p className="error-text">{formError}</p>}
+      </form>
+    </Modal>
   )
 }

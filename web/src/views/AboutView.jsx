@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
+import { ConfirmModal } from '../components/Modal.jsx'
 import { Spinner } from '../components/primitives.jsx'
 import { Icon } from '../icons.jsx'
 import { fmtDate, fmtTokens } from '../lib/format.js'
@@ -126,27 +127,32 @@ export function AboutView({ projectId, onDeleted }) {
     <div className="center-col">
       <div className="page-head">
         <h2>About</h2>
-        {confirmDelete ? (
-          <div className="row" style={{ marginBottom: 0 }}>
-            <span className="muted">Delete this project?</span>
-            <button
-              className="btn danger"
-              onClick={() =>
-                api.deleteProject(project.id).then(onDeleted).catch((e) => alert(e.message))
-              }
-            >
-              Confirm
-            </button>
-            <button className="btn" onClick={() => setConfirmDelete(false)}>
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button className="btn danger" onClick={() => setConfirmDelete(true)}>
-            Delete project
-          </button>
-        )}
+        <button className="btn danger" onClick={() => setConfirmDelete(true)}>
+          Delete project
+        </button>
       </div>
+      {confirmDelete && (
+        <ConfirmModal
+          title="Delete project"
+          confirmLabel="Delete"
+          danger
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={() =>
+            api
+              .deleteProject(project.id)
+              .then(onDeleted)
+              .catch((e) => {
+                setConfirmDelete(false)
+                setActionError(e.message)
+              })
+          }
+        >
+          <p className="note">
+            Delete <strong>{project.name}</strong>? This removes its registry entry and local
+            clone. This cannot be undone.
+          </p>
+        </ConfirmModal>
+      )}
       <dl className="kv">
         <dt>Description</dt>
         <dd>{project.description || '—'}</dd>
@@ -330,22 +336,24 @@ export function AboutView({ projectId, onDeleted }) {
             branch, push, and open pull requests.
           </p>
           <div className="row">
-            {confirmWrites ? (
-              <>
-                <span className="muted">Let the agent modify the clone?</span>
-                <button className="btn danger" onClick={() => setWrites(true)}>
-                  Confirm enable
-                </button>
-                <button className="btn" onClick={() => setConfirmWrites(false)}>
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button className="btn" onClick={() => setConfirmWrites(true)}>
-                <Icon name="alert" size={14} /> Enable git writes…
-              </button>
-            )}
+            <button className="btn" onClick={() => setConfirmWrites(true)}>
+              <Icon name="alert" size={14} /> Enable git writes…
+            </button>
           </div>
+          {confirmWrites && (
+            <ConfirmModal
+              title="Enable git writes"
+              confirmLabel="Confirm enable"
+              danger
+              onClose={() => setConfirmWrites(false)}
+              onConfirm={() => setWrites(true)}
+            >
+              <p className="note">
+                Let the agent modify the clone? It will be able to write files, create branches,
+                commit, push, and open pull requests.
+              </p>
+            </ConfirmModal>
+          )}
         </>
       )}
       <h3 className="faint" style={{ fontSize: 13, fontWeight: 600 }}>

@@ -343,7 +343,7 @@ export function ProvidersPanel() {
 
       {loading && <p className="note">Loading...</p>}
       {error && <p className="error-text">{error}</p>}
-      {providers && providers.length === 0 && <p className="note">No providers configured.</p>}
+      {providers && providers.length === 0 && <p className="error-banner">No providers configured.</p>}
       <div className="cards">
         {(providers || []).map((p) => {
           const tr = testResults[p.id]

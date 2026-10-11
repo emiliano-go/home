@@ -1,45 +1,22 @@
-import { useEffect, useState } from 'react'
-import { DEFAULT_THEME, LIGHT_THEME, THEME_LABELS, THEME_MODES, THEME_PRESETS, defaultThemeState, effectiveMode, hexToRgb } from '../theme.js'
-
-export function ColorField({ label, value, onChange }) {
-  const [draft, setDraft] = useState(value)
-
-  useEffect(() => {
-    setDraft(value)
-  }, [value])
-
-  const commit = () => {
-    if (hexToRgb(draft)) onChange(draft)
-    else setDraft(value)
-  }
-
-  return (
-    <div className="theme-row">
-      <label>{label}</label>
-      <input type="color" value={value} onChange={(e) => onChange(e.target.value)} />
-      <input
-        type="text"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit()
-        }}
-      />
-    </div>
-  )
-}
+import { DEFAULT_THEME, LIGHT_THEME, THEME_MODES, THEME_PRESETS, defaultThemeState, effectiveMode } from '../theme.js'
 
 export function ThemePanel({ theme, setTheme }) {
-  const [editMode, setEditMode] = useState(effectiveMode(theme))
-  const base = editMode === 'light' ? LIGHT_THEME : DEFAULT_THEME
-  const overrides = theme.themes[editMode] || {}
-  const value = (key) => overrides[key] || base[key]
+  const activeMode = effectiveMode(theme)
+  const base = activeMode === 'light' ? LIGHT_THEME : DEFAULT_THEME
+  const merged = { ...base, ...(theme.themes[activeMode] || {}) }
 
-  const setColor = (key, raw) => {
+  const isActive = (key) => {
+    const preset = THEME_PRESETS[key]
+    if (!preset || preset.mode !== activeMode) return false
+    return Object.keys(base).every((k) => merged[k] === preset.palette[k])
+  }
+
+  const applyPreset = (key) => {
+    const preset = THEME_PRESETS[key]
+    if (!preset) return
     setTheme({
-      ...theme,
-      themes: { ...theme.themes, [editMode]: { ...overrides, [key]: raw } },
+      mode: preset.mode,
+      themes: { ...theme.themes, [preset.mode]: { ...preset.palette } },
     })
   }
 
@@ -66,60 +43,22 @@ export function ThemePanel({ theme, setTheme }) {
       <div className="field">
         <span className="field-label">Presets</span>
         <div className="row" style={{ marginBottom: 0 }}>
-          <button
-            className="btn"
-            onClick={() => {
-              setEditMode('dark')
-              setTheme({ ...theme, themes: { ...theme.themes, dark: {} } })
-            }}
-          >
-            Hestia (default)
-          </button>
-          <button
-            className="btn"
-            onClick={() => {
-              setEditMode('dark')
-              setTheme({
-                ...theme,
-                themes: { ...theme.themes, dark: { ...THEME_PRESETS['titan-black'] } },
-              })
-            }}
-          >
-            Titan Black
-          </button>
-        </div>
-      </div>
-
-      <div className="field">
-        <span className="field-label">Customize palette</span>
-        <div className="segmented">
-          {['light', 'dark'].map((mode) => (
+          {Object.entries(THEME_PRESETS).map(([key, preset]) => (
             <button
-              key={mode}
-              className={editMode === mode ? 'on' : ''}
-              onClick={() => setEditMode(mode)}
+              key={key}
+              className={`btn${isActive(key) ? ' primary' : ''}`}
+              onClick={() => applyPreset(key)}
             >
-              {mode === 'light' ? 'Light' : 'Dark'}
+              {preset.label}
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="theme-grid">
-        {Object.entries(THEME_LABELS).map(([key, label]) => (
-          <ColorField key={key} label={label} value={value(key)} onChange={(v) => setColor(key, v)} />
-        ))}
+        <span className="field-hint">
+          A preset also switches the appearance to its light or dark mode.
+        </span>
       </div>
 
       <div className="row" style={{ marginBottom: 0 }}>
-        <button
-          className="btn"
-          onClick={() =>
-            setTheme({ ...theme, themes: { ...theme.themes, [editMode]: {} } })
-          }
-        >
-          Reset {editMode} palette
-        </button>
         <button className="btn" onClick={() => setTheme(defaultThemeState())}>
           Reset all
         </button>

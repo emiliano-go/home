@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { api } from '../api.js'
-import { Modal } from '../components/Modal.jsx'
+import { Modal, ConfirmModal } from '../components/Modal.jsx'
 import { ProgressBar, SectionEmpty, Skeleton, Spinner } from '../components/primitives.jsx'
 import { Icon } from '../icons.jsx'
 import { useAsync } from '../lib/hooks.js'
@@ -26,6 +26,7 @@ export function MilestoneEditor({ milestone, projectId, onClose, onSaved }) {
   const [searching, setSearching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const search = (e) => {
     e.preventDefault()
@@ -68,7 +69,6 @@ export function MilestoneEditor({ milestone, projectId, onClose, onSaved }) {
 
   const remove = () => {
     if (isNew) return onClose()
-    if (!window.confirm('Delete this milestone? Its tasks are kept, just unassigned.')) return
     api.deleteMilestone(milestone.id).then(onSaved).catch((err) => setError(err.message))
   }
 
@@ -162,12 +162,29 @@ export function MilestoneEditor({ milestone, projectId, onClose, onSaved }) {
             )}
           </button>
           {!isNew && (
-            <button type="button" className="btn danger" onClick={remove}>
+            <button type="button" className="btn danger" onClick={() => setConfirmDelete(true)}>
               Delete
             </button>
           )}
         </div>
         {error && <div className="error-text">{error}</div>}
+        {confirmDelete && (
+          <ConfirmModal
+            title="Delete milestone"
+            confirmLabel="Delete"
+            danger
+            onClose={() => setConfirmDelete(false)}
+            onConfirm={() => {
+              setConfirmDelete(false)
+              remove()
+            }}
+          >
+            <p className="note">
+              Delete milestone <strong>{title.trim() || 'Untitled'}</strong>? Its tasks are kept,
+              just unassigned.
+            </p>
+          </ConfirmModal>
+        )}
       </form>
     </Modal>
   )

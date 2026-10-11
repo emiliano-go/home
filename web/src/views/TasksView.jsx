@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { Modal } from '../components/Modal.jsx'
+import { Modal, ConfirmModal } from '../components/Modal.jsx'
 import { Skeleton, Spinner } from '../components/primitives.jsx'
 import { Icon } from '../icons.jsx'
 import { relDate, truncate } from '../lib/format.js'
@@ -48,6 +48,8 @@ export function TaskEditor({ task, projectId, onClose, onSaved, onImplement, git
   const [syncing, setSyncing] = useState(false)
   const [running, setRunning] = useState(false)
   const [issueNumber, setIssueNumber] = useState(task.github_issue || null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [pendingDone, setPendingDone] = useState(null)
   const milestonesReq = useAsync(() => api.listMilestones(projectId), [projectId])
   const milestones = milestonesReq.data || []
   const tasksReq = useAsync(() => api.listTasks(projectId), [projectId])
@@ -126,8 +128,6 @@ export function TaskEditor({ task, projectId, onClose, onSaved, onImplement, git
   const save = (e) => {
     e.preventDefault()
     if (!title.trim()) return
-    setSaving(true)
-    setError(null)
     const body = {
       title: title.trim(),
       description,
@@ -139,15 +139,15 @@ export function TaskEditor({ task, projectId, onClose, onSaved, onImplement, git
       due_at: dueDate || '',
     }
     if (!isNew && status === 'done' && task.status !== 'done' && acceptance.trim()) {
-      const ok = window.confirm(
-        `Acceptance criteria:\n${acceptance}\n\nConfirm the review and mark this task done?`
-      )
-      if (!ok) {
-        setSaving(false)
-        return
-      }
-      body.reviewed = true
+      setPendingDone(body)
+      return
     }
+    submitUpdate(body)
+  }
+
+  const submitUpdate = (body) => {
+    setSaving(true)
+    setError(null)
     const req = isNew
       ? api.createTask(projectId, body)
       : api.updateTask(task.id, body)
@@ -159,7 +159,6 @@ export function TaskEditor({ task, projectId, onClose, onSaved, onImplement, git
 
   const remove = () => {
     if (isNew) return onClose()
-    if (!window.confirm('Delete this task?')) return
     api.deleteTask(task.id).then(onSaved).catch((err) => setError(err.message))
   }
 
@@ -332,12 +331,44 @@ export function TaskEditor({ task, projectId, onClose, onSaved, onImplement, git
           )}
           {issueNumber && <span className="badge">issue #{issueNumber}</span>}
           {!isNew && (
-            <button type="button" className="btn danger" onClick={remove}>
+            <button type="button" className="btn danger" onClick={() => setConfirmDelete(true)}>
               Delete
             </button>
           )}
         </div>
         {error && <div className="error-text">{error}</div>}
+        {confirmDelete && (
+          <ConfirmModal
+            title="Delete task"
+            confirmLabel="Delete"
+            danger
+            onClose={() => setConfirmDelete(false)}
+            onConfirm={() => {
+              setConfirmDelete(false)
+              remove()
+            }}
+          >
+            <p className="note">
+              Delete task <strong>{title.trim() || 'Untitled'}</strong>? This cannot be undone.
+            </p>
+          </ConfirmModal>
+        )}
+        {pendingDone && (
+          <ConfirmModal
+            title="Mark task done"
+            confirmLabel="Confirm review"
+            onClose={() => setPendingDone(null)}
+            onConfirm={() => {
+              const body = { ...pendingDone, reviewed: true }
+              setPendingDone(null)
+              submitUpdate(body)
+            }}
+          >
+            <p className="note">Acceptance criteria:</p>
+            <pre style={{ whiteSpace: 'pre-wrap' }}>{acceptance}</pre>
+            <p className="note">Confirm the review and mark this task done?</p>
+          </ConfirmModal>
+        )}
       </form>
     </Modal>
   )
@@ -352,6 +383,26 @@ export function TasksView({ projectId, onImplement, gitWrites }) {
   const [suggestReport, setSuggestReport] = useState(null)
   const [suggestError, setSuggestError] = useState(null)
   const [runningNext, setRunningNext] = useState(false)
+
+  // Let a vertical mouse wheel scroll the board horizontally.
+  const wheelCleanup = useRef(null)
+  const kanbanRef = useCallback((el) => {
+    wheelCleanup.current?.()
+    wheelCleanup.current = null
+    if (!el) return
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+      const max = el.scrollWidth - el.clientWidth
+      if (max <= 0) return
+      if ((e.deltaY < 0 && el.scrollLeft <= 0) || (e.deltaY > 0 && el.scrollLeft >= max - 1)) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    wheelCleanup.current = () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  useEffect(() => () => wheelCleanup.current?.(), [])
 
   const runNext = () => {
     setRunningNext(true)
@@ -460,7 +511,7 @@ export function TasksView({ projectId, onImplement, gitWrites }) {
       {suggestError && <p className="error-text">{suggestError}</p>}
       {error && <p className="error-text">{error}</p>}
       {loading ? (
-        <div className="kanban">
+        <div className="kanban" ref={kanbanRef}>
           {TASK_COLUMNS.map((c) => (
             <div key={c.key} className="kanban-col">
               <Skeleton className="row-skeleton" />
@@ -469,7 +520,7 @@ export function TasksView({ projectId, onImplement, gitWrites }) {
           ))}
         </div>
       ) : (
-        <div className="kanban">
+        <div className="kanban" ref={kanbanRef}>
           {columns.map((col) => (
             <div
               key={col.key}

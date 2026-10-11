@@ -29,11 +29,13 @@ export function CaptureView({ projectId }) {
   return (
     <div className="center-col">
       <div className="page-head">
-        <h2>Capture</h2>
-        <span className="muted">
-          paste notes, an email, or a thread; the agent structures it into tasks,
-          reminders, decisions, and client facts
-        </span>
+        <div className="page-head-title">
+          <h2>Capture</h2>
+          <p className="note">
+            Paste notes, an email, or a thread; the agent structures it into tasks,
+            reminders, decisions, and client facts
+          </p>
+        </div>
       </div>
       <form className="docs-card" onSubmit={submit}>
         <textarea
