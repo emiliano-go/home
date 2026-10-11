@@ -1,11 +1,12 @@
 """Workspace file browsing: per project and a cross-project gallery."""
 
 import fnmatch
+import mimetypes
 import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from sqlmodel import Session, select
 
 from hestia import config
@@ -54,6 +55,20 @@ def read_workspace_file(project_id: int, path: str, s: Session = Depends(session
     if not str(target).startswith(str(root) + os.sep) or not target.is_file():
         raise HTTPException(404, "file not found")
     return target.read_bytes()[:_MAX_BYTES].decode("utf-8", "replace")
+
+
+@router.get("/projects/{project_id}/workspace/raw")
+def raw_workspace_file(project_id: int, path: str, s: Session = Depends(session)):
+    """Serve a workspace file verbatim (images render in the browser)."""
+    project = s.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    root = config.workspace_dir(project.name).resolve()
+    target = (root / path).resolve()
+    if not str(target).startswith(str(root) + os.sep) or not target.is_file():
+        raise HTTPException(404, "file not found")
+    media_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+    return FileResponse(target, media_type=media_type)
 
 
 @router.get("/gallery")

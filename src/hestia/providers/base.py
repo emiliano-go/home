@@ -1,9 +1,18 @@
 """OpenAI-compatible chat-completions client (async, streaming, tool calling)."""
 
 import os
+import secrets
 from typing import Any, AsyncIterator
 
 import httpx
+
+from hestia.providers.pool import cooldown_seconds
+
+USER_AGENT = "hestia-agent/1.0"
+
+# Accepted reasoning_effort values. Some Go models reject "medium" (e.g. GLM);
+# "none" disables thinking entirely on models that allow it.
+REASONING_EFFORTS = ("none", "low", "medium", "high", "max")
 
 
 class ProviderError(RuntimeError):
@@ -11,24 +20,45 @@ class ProviderError(RuntimeError):
 
 
 class OpenAIClient:
-    def __init__(self, base_url: str, api_key: str | None, model: str, timeout: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        timeout: float = 120.0,
+        session: str | None = None,
+        reasoning_effort: str | None = None,
+        keys: list[str] | None = None,
+        on_key_failure=None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        # none | low | medium | high | max; omitted from the payload when unset
+        self.reasoning_effort = reasoning_effort or None
+        # OpenCode Go wants a stable per-conversation session id for routing;
+        # callers pass the chat/session id when they have one.
+        self.session = session or secrets.token_urlsafe(12)
+        # Rotation pool: on 429/402/401/403 try the next key. on_key_failure is
+        # called with (key, status, cooldown_seconds) so the caller can persist
+        # the suspension/revocation on the provider row.
+        self.keys = keys
+        self.on_key_failure = on_key_failure
 
-    def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+    def _headers(self, key: str | None) -> dict[str, str]:
+        headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        if "opencode.ai" in self.base_url:
+            headers["x-opencode-session"] = self.session
         return headers
 
-    async def stream_chat(
+    def _payload(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Yield raw SSE chunks from /chat/completions."""
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -37,27 +67,54 @@ class OpenAIClient:
         }
         if tools:
             payload["tools"] = tools
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
+        return payload
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield raw SSE chunks from /chat/completions, rotating keys on failure."""
+        payload = self._payload(messages, tools)
+        keys = self.keys or ([self.api_key] if self.api_key else [None])
+        last_error: ProviderError | None = None
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/v1/chat/completions",
-                headers=self._headers(),
-                json=payload,
-            ) as resp:
-                if resp.status_code != 200:
+            for index, key in enumerate(keys):
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/v1/chat/completions",
+                    headers=self._headers(key),
+                    json=payload,
+                ) as resp:
+                    if resp.status_code == 200:
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            data = line.removeprefix("data:").strip()
+                            if data == "[DONE]":
+                                return
+                            import json
+
+                            yield json.loads(data)
+                        return
                     body = await resp.aread()
-                    raise ProviderError(
+                    error = ProviderError(
                         f"{resp.status_code}: {body.decode('utf-8', 'replace')[:500]}"
                     )
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data:"):
+                    if resp.status_code in (429, 402, 401, 403) and index + 1 < len(keys):
+                        if self.on_key_failure is not None:
+                            cooldown = cooldown_seconds(resp.headers)
+                            try:
+                                self.on_key_failure(key, resp.status_code, cooldown)
+                            except Exception:  # noqa: BLE001
+                                pass
+                        last_error = error
                         continue
-                    data = line.removeprefix("data:").strip()
-                    if data == "[DONE]":
-                        return
-                    import json
-
-                    yield json.loads(data)
+                    raise error
+        if last_error is not None:
+            raise last_error
 
     async def test_connection(self) -> dict[str, Any]:
         """Cheap liveness check: 1-token completion."""
@@ -71,17 +128,50 @@ class OpenAIClient:
 
 
 def resolve_api_key(provider) -> str | None:
-    """Key from the stored provider row if present, else its env var.
+    """The provider's currently active key (pool-aware), else its env var.
 
     Accepts a Provider or a bare env var name (backwards compatible).
     """
     if isinstance(provider, str):
         return os.environ.get(provider) or None
-    stored = getattr(provider, "api_key", None)
-    if stored:
-        return stored
-    env = getattr(provider, "api_key_env", "") or ""
-    return os.environ.get(env) if env else None
+    from hestia.providers import pool
+
+    return pool.active(provider)
+
+
+def provider_client(provider, model: str, db=None, **kwargs) -> OpenAIClient:
+    """Build a client with the provider's key pool and failure reporting."""
+    from hestia.providers import pool
+
+    keys = pool.keys_of(provider)
+
+    def on_key_failure(key, status, cooldown):
+        pool.note_failure(provider, key, status, cooldown)
+        if db is not None:
+            try:
+                db.add(provider)
+                db.commit()
+            except Exception:  # noqa: BLE001
+                pass
+
+    return OpenAIClient(
+        provider.base_url,
+        pool.active(provider),
+        model,
+        keys=keys or None,
+        on_key_failure=on_key_failure,
+        **kwargs,
+    )
+
+
+def resolve_model(agent, provider) -> str:
+    """The agent's model override when set, else the provider's model."""
+    return getattr(agent, "model", None) or provider.model
+
+
+def resolve_small_model(provider) -> str:
+    """Cheap model for titles/summaries/distillation; falls back to the main model."""
+    return getattr(provider, "small_model", "") or provider.model
 
 
 async def list_models(base_url: str, api_key: str | None) -> list[str]:

@@ -1,4 +1,4 @@
-export const GLOBAL_VIEWS = ['home', 'help', 'search', 'agents', 'gallery', 'reminders', 'watches', 'settings']
+export const GLOBAL_VIEWS = ['home', 'help', 'search', 'agents', 'gallery', 'reminders', 'watches', 'settings', 'new-project', 'runs']
 
 export const PROJECT_VIEWS = [
   'welcome',
@@ -14,6 +14,7 @@ export const PROJECT_VIEWS = [
   'background',
   'capture',
   'about',
+  'repos',
 ]
 
 export function parseHash(hash) {
@@ -30,7 +31,7 @@ export function parseHash(hash) {
         type: PROJECT_VIEWS.includes(parts[2]) ? parts[2] : 'welcome',
         ...(action ? { action } : {}),
       },
-      session: params.get('session') ? Number(params.get('session')) : null,
+      session: params.get('session') || null,
     }
   }
   if (parts[0] === 'g' && GLOBAL_VIEWS.includes(parts[1])) {
@@ -44,7 +45,7 @@ export function parseHash(hash) {
 
 export function viewHash(projectId, view, chatSessionId) {
   if (view.type === 'reminders' || view.type === 'watches') return `#/g/${view.type}`
-  if (['home', 'help', 'search', 'agents', 'gallery', 'settings'].includes(view.type)) {
+  if (['home', 'help', 'search', 'agents', 'gallery', 'settings', 'new-project', 'runs'].includes(view.type)) {
     return `#/${view.type}`
   }
   if (projectId && PROJECT_VIEWS.includes(view.type)) {

@@ -51,7 +51,7 @@ class _TextExtractor(HTMLParser):
         return " ".join(" ".join(self._parts).split())
 
 
-def _validate(url: str) -> str:
+def _validate(url: str, allow_local: bool = False) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise FetchError("only http and https URLs are allowed")
@@ -64,6 +64,12 @@ def _validate(url: str) -> str:
         raise FetchError(f"could not resolve host: {host}") from e
     for info in infos:
         address = ipaddress.ip_address(info[4][0])
+        if allow_local and (
+            address.is_loopback or (address.is_private and not address.is_link_local)
+        ):
+            # explicit per-project opt-in for local dev servers; link-local
+            # (cloud metadata) stays blocked even then
+            continue
         if (
             address.is_private
             or address.is_loopback

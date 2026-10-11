@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
-from hestia import actions, events, notify, settings, totem_store, usage, webfetch
+from hestia import actions, events, notify, repos, settings, totem_store, usage, webfetch
 from hestia.agent.prompt import build_system_prompt
 from hestia.agent.run import run_once
 from hestia.registry.models import Project, Provider, Watch
@@ -278,11 +278,12 @@ async def _check_condition(db: Session, watch: Watch) -> None:
     agent = actions.resolve_action(db, "chat")
     provider_id = (agent.provider_id if agent else None) or project.default_provider_id
     provider = db.get(Provider, provider_id) if provider_id else None
+    provider = actions.effective_provider(agent, provider)
     if provider is None:
         watch.last_result = "no provider configured; skipped"
         return
     digest = totem_store.digest(
-        project.local_path, task=f"Check watch: {watch.condition}"
+        repos.memory_root(project), task=f"Check watch: {watch.condition}"
     )
     system = build_system_prompt(
         ProjectContext.from_project(project),
@@ -302,7 +303,6 @@ async def _check_condition(db: Session, watch: Watch) -> None:
         system,
         "Check the watch condition.",
         groups="web,repo,files,github",
-        max_turns=6,
         tasks_db=db,
     )
     usage.record(db, project.id, action="watch", model=provider.model, usage=tokens)

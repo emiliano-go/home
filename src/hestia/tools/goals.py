@@ -32,7 +32,7 @@ def make_tools(db: Session) -> list[Tool]:
         Tool(
             name="goal_list",
             description="List the project's goals with status and board progress.",
-            parameters=schema({"properties": {}, "required": []}, []),
+            parameters=schema({}, []),
             handler=list_handler,
             group="tasks",
         ),

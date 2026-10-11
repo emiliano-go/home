@@ -95,7 +95,7 @@ def update(db: Session, goal: Goal, fields: dict) -> Goal:
     if "status" in fields:
         goal.status = _clean_status(fields["status"], goal.status)
     if "session_id" in fields:
-        goal.session_id = int(fields["session_id"]) if fields["session_id"] else None
+        goal.session_id = str(fields["session_id"]) if fields["session_id"] else None
     if "milestone_id" in fields:
         goal.milestone_id = int(fields["milestone_id"]) if fields["milestone_id"] else None
     if "spec_path" in fields:

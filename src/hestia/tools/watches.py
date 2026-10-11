@@ -60,7 +60,7 @@ def make_tools(db: Session) -> list[Tool]:
         Tool(
             name="watch_list",
             description="List watchers with status and last result.",
-            parameters=schema({"properties": {}, "required": []}, []),
+            parameters=schema({}, []),
             handler=list_handler,
             group="chat",
         ),

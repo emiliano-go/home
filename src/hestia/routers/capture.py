@@ -44,11 +44,12 @@ async def capture(project_id: int, body: dict, s: Session = Depends(session)):
         or project.default_provider_id
     )
     provider = s.get(Provider, provider_id) if provider_id else None
+    provider = actions.effective_provider(agent, provider)
     if provider is None:
         raise HTTPException(400, "no provider configured for this project")
 
     ctx = ProjectContext.from_project(project)
-    digest = totem_store.digest(ctx.local_path, task="Capture notes")
+    digest = totem_store.digest(ctx.memory_path, task="Capture notes")
     system = build_system_prompt(
         ctx,
         agents_md=project.agents_md,
@@ -67,7 +68,6 @@ async def capture(project_id: int, body: dict, s: Session = Depends(session)):
         system,
         text,
         groups=groups,
-        max_turns=agent.max_turns if agent else 10,
         tasks_db=s,
     )
     usage.record(s, project.id, action="capture", model=provider.model, usage=tokens)

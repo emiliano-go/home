@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { version as APP_VERSION } from '../package.json'
 import { api } from './api.js'
-import { AddProjectModal } from './AddProjectModal.jsx'
 import { AgentsPage } from './agents/AgentsPage.jsx'
 import { Modal } from './components/Modal.jsx'
 import { Spinner } from './components/primitives.jsx'
@@ -21,6 +20,9 @@ import { FileReaderPane, FilesView, GalleryView } from './views/FilesView.jsx'
 import { GithubView } from './views/GithubView.jsx'
 import { GoalsView } from './views/GoalsView.jsx'
 import { HelpView } from './views/HelpView.jsx'
+import { NewProjectView } from './views/NewProjectView.jsx'
+import { ReposView } from './views/ReposView.jsx'
+import { RunsView } from './views/RunsView.jsx'
 import { HomeView, LoginView } from './views/HomeView.jsx'
 import { MemoryView } from './views/MemoryView.jsx'
 import { ProjectOverviewView } from './views/ProjectOverviewView.jsx'
@@ -35,15 +37,16 @@ export default function App() {
   const projectsReq = useAsync(api.listProjects, [])
   const providersReq = useAsync(api.listProviders, [])
   const agentsReq = useAsync(api.listAgents, [])
+  const actionsReq = useAsync(api.listActions, [])
 
   const projects = projectsReq.data || []
   const [projectId, setProjectId] = useState(null)
   // home | help | welcome(overview) | chat | tasks | github | activity | files | memory | about | agents | gallery
   const [view, setView] = useState({ type: 'home' })
+  const [activeRuns, setActiveRuns] = useState(0)
   const [chatSessionId, setChatSessionId] = useState(null)
   const [initialMessage, setInitialMessage] = useState(null)
   const [chatKey, setChatKey] = useState(0)
-  const [showAddProject, setShowAddProject] = useState(false)
   const [agentId, setAgentId] = useState('')
   const [providerId, setProviderId] = useState('')
   const [settingsTab, setSettingsTab] = useState('providers')
@@ -211,6 +214,25 @@ export default function App() {
     setInitialMessage(null)
   }
 
+  const openNewProject = () => {
+    setView({ type: 'new-project' })
+  }
+
+  useEffect(() => {
+    let alive = true
+    const tick = () =>
+      api
+        .listRuns(true)
+        .then((rows) => alive && setActiveRuns(rows.length))
+        .catch(() => {})
+    tick()
+    const timer = setInterval(tick, 6000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [])
+
   // Project-aware navigation used by the per-project dropdowns.
   const startNewChatFor = (pid) => {
     if (pid !== effectiveProjectId) {
@@ -284,6 +306,14 @@ export default function App() {
   const agents = agentsReq.data || []
   const providers = providersReq.data || []
   const project = projects.find((p) => p.id === effectiveProjectId)
+  const actions = actionsReq.data || []
+  const chatDefaultAgentId = actions.find((a) => a.key === 'chat')?.agent_id
+  const chatDefaultAgent = agents.find((a) => a.id === chatDefaultAgentId) || null
+  const agentLabel = (a) => {
+    const model = a.model || providers.find((p) => p.id === a.provider_id)?.model || ''
+    return `${a.name}${model ? ` · ${model}` : ''}${a.reasoning_effort ? ` (${a.reasoning_effort})` : ''}`
+  }
+  const projectDefaultProvider = providers.find((p) => p.id === project?.default_provider_id)
   const inProjectView = [
     'welcome',
     'chat',
@@ -332,7 +362,7 @@ export default function App() {
           </button>
           <div className="sidebar-label">
             <span>Projects</span>
-            <button title="Add project" onClick={() => setShowAddProject(true)}>
+            <button title="Add project" onClick={openNewProject}>
               <Icon name="plus" size={14} />
             </button>
           </div>
@@ -532,6 +562,14 @@ export default function App() {
               Agents
             </button>
             <button
+              className={`sidebar-item ${view.type === 'runs' ? 'active' : ''}`}
+              onClick={() => setView({ type: 'runs' })}
+            >
+              <Icon name="play" size={16} className="si-icon" />
+              Runs
+              {activeRuns > 0 && <span className="sub">{activeRuns}</span>}
+            </button>
+            <button
               className={`sidebar-item ${view.type === 'skills' ? 'active' : ''}`}
               onClick={() => setView({ type: 'skills' })}
             >
@@ -613,16 +651,24 @@ export default function App() {
             </div>
             <div className="topbar-right">
               <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-                <option value="">Default agent</option>
+                <option value="">
+                  {chatDefaultAgent
+                    ? `${agentLabel(chatDefaultAgent)} · chat default`
+                    : 'Default agent'}
+                </option>
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}
+                    {agentLabel(a)}
                   </option>
                 ))}
               </select>
-              {!agentId && (
+              {!agentId && !chatDefaultAgent && (
                 <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-                  <option value="">Default provider</option>
+                  <option value="">
+                    {projectDefaultProvider
+                      ? `Project default (${projectDefaultProvider.name})`
+                      : 'Default provider'}
+                  </option>
                   {providers.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name} ({p.model})
@@ -644,7 +690,7 @@ export default function App() {
         <div className="content">
           {view.type === 'home' && (
             <HomeView
-              onNewProject={() => setShowAddProject(true)}
+              onNewProject={openNewProject}
               onNavigate={setView}
               onOpenProject={(id) => selectProject(id)}
               onOpenSession={openSessionFromLanding}
@@ -653,6 +699,18 @@ export default function App() {
             />
           )}
           {view.type === 'help' && <HelpView />}
+          {view.type === 'runs' && (
+            <RunsView projects={projects} onOpenSession={openSessionFromLanding} />
+          )}
+          {view.type === 'new-project' && (
+            <NewProjectView
+              onCancel={() => setView({ type: 'home' })}
+              onCreated={(p) => {
+                projectsReq.reload()
+                selectProject(p.id)
+              }}
+            />
+          )}
           {view.type === 'search' && (
             <SearchView
               onOpenMemory={(pid) => openProjectView(pid, 'memory')}
@@ -675,6 +733,7 @@ export default function App() {
               since={prevOpenedAt}
               onStart={startChatWith}
               onNavigate={setView}
+              onOpenSession={(sid) => openSessionFromLanding(project.id, sid)}
               onOpenSettings={(tab) => {
                 setSettingsTab(tab || 'providers')
                 setView({ type: 'settings' })
@@ -683,7 +742,7 @@ export default function App() {
           )}
           {project && view.type === 'chat' && (
             <ChatView
-              key={`${project.id}:${chatSessionId ?? 'new'}:${chatKey}`}
+              key={`${project.id}:${chatKey}`}
               projectId={project.id}
               sessionId={chatSessionId}
               agentId={agentId}
@@ -734,6 +793,7 @@ export default function App() {
             <AutomationsView projectId={project.id} />
           )}
           {project && view.type === 'files' && <FilesView projectId={project.id} />}
+          {project && view.type === 'repos' && <ReposView projectId={project.id} />}
           {project && view.type === 'memory' && (
             <MemoryView projectId={project.id} providerId={providerId} onStart={startChatWith} />
           )}
@@ -780,16 +840,6 @@ export default function App() {
         </Modal>
       )}
 
-      {showAddProject && (
-        <AddProjectModal
-          onClose={() => setShowAddProject(false)}
-          onCreated={(p) => {
-            setShowAddProject(false)
-            projectsReq.reload()
-            selectProject(p.id)
-          }}
-        />
-      )}
     </div>
   )
 }

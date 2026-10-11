@@ -34,6 +34,28 @@ def test_digest_ranks_relevant_memory(tmp_path):
     assert "FastAPI" in ctx["context"]
 
 
+def test_digest_budget_and_item_cap(tmp_path):
+    totem_store.create(
+        tmp_path,
+        type="invariant",
+        title="Huge invariant",
+        statement="S" * 3000,
+        tags=["invariant"],
+        metadata={"verificationMethod": "V" * 2000, "condition": "C" * 2000},
+    )
+    totem_store.create(
+        tmp_path,
+        type="gotcha",
+        title="Memory path",
+        statement="Project memory lives in .totem/totem.db.",
+        tags=["memory"],
+    )
+    ctx = totem_store.digest(tmp_path, task="Where does memory live?", token_budget=1200)
+    assert ("S" * 1000) not in ctx["context"]
+    assert ("V" * 1000) not in ctx["context"]
+    assert len(ctx["context"]) < 6000
+
+
 def test_update_and_delete(tmp_path):
     created = totem_store.create(
         tmp_path,

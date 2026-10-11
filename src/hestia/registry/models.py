@@ -4,6 +4,7 @@ Sessions and messages are views for the UI; durable cross-session memory
 lives in each project's Totem DB, not here.
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,20 +18,43 @@ def _now() -> datetime:
 class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    repo_url: str
-    local_path: str
+    description: str = ""
+    # Legacy single-repo mirror of the primary ProjectRepo; multi-repo code
+    # reads ProjectRepo rows and only falls back here for pre-migration data.
+    repo_url: str = ""
+    local_path: str = ""
     agents_md: Optional[str] = None
     default_provider_id: Optional[int] = None
     last_opened_at: Optional[datetime] = None
     allow_git_writes: bool = False  # explicit opt-in: agent may modify the clone
+    write_mode: str = ""  # read | ask | auto | yolo; "" derives from allow_git_writes
     require_write_approval: bool = False  # hard gate: push/PR need an approved request
+    require_plan: bool = False  # hard gate: writes need a plan + per-step drift check
+    allow_local_browser: bool = False  # explicit opt-in: browser may reach localhost
     token_budget: Optional[int] = None  # monthly token budget (None = unlimited)
     budget_enforced: bool = False  # skip scheduled runs once the budget is spent
     created_at: datetime = Field(default_factory=_now)
 
 
-class Session(SQLModel, table=True):
+class ProjectRepo(SQLModel, table=True):
+    """One Git repository belonging to a project.
+
+    A project owns one or more repositories; exactly one is primary (the
+    legacy ``Project.repo_url``/``local_path`` mirror). Alias is the short
+    name the agent and UI use to reference the repo.
+    """
+
     id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    alias: str
+    repo_url: str
+    local_path: str
+    is_primary: bool = False
+    created_at: datetime = Field(default_factory=_now)
+
+
+class Session(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     title: str = "New session"
     action: str = "chat"  # action key the session was started with
@@ -40,9 +64,10 @@ class Session(SQLModel, table=True):
 
 class Message(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    session_id: int = Field(foreign_key="session.id", index=True)
+    session_id: str = Field(foreign_key="session.id", index=True)
     role: str
     content: str
+    thinking: Optional[str] = None  # model reasoning shown in the UI only
     tool_calls: Optional[str] = None  # JSON: OpenAI tool-call list
     tool_call_id: Optional[str] = None  # for role=tool rows
     ok: Optional[bool] = None  # tool result success (role=tool)
@@ -56,7 +81,11 @@ class Provider(SQLModel, table=True):
     base_url: str
     api_key_env: str = ""  # optional env var name holding the key
     api_key: Optional[str] = Field(default=None)  # key stored from the UI (optional)
-    model: str = ""
+    keys: str = "[]"  # JSON list of extra API keys (rotation pool)
+    key_state: str = "{}"  # JSON rotation state: {suspended: {hash: until}, revoked: [hash]}
+    model: str = ""  # default model
+    small_model: str = ""  # cheap model for titles/summaries/distillation (falls back to model)
+    models: str = "[]"  # JSON list of model ids configured for this provider
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -71,7 +100,10 @@ class AgentConfig(SQLModel, table=True):
     name: str
     system_prompt: str = ""
     provider_id: int = Field(foreign_key="provider.id")
+    model: Optional[str] = Field(default=None)  # overrides the provider's model when set
+    reasoning_effort: Optional[str] = Field(default=None)  # none|low|medium|high|max
     tools: str = "repo,files"  # comma-separated tool groups: repo, files, github, memory
+    mode: str = "read"  # delegation mode: read (no writes) | write (workspace + memory)
     max_turns: int = 6
     created_at: datetime = Field(default_factory=_now)
 
@@ -112,6 +144,7 @@ class Task(SQLModel, table=True):
     depends_on: str = "[]"  # JSON: task ids that must be done first
     acceptance: str = ""  # definition of done; gates the done column
     github_issue: Optional[int] = None  # synced GitHub issue number
+    repo: Optional[str] = None  # repo alias for implement/issue sync (None = primary)
     source: str = "user"  # user | suggested
     due_at: Optional[datetime] = None  # UTC deadline, surfaced as at-risk
     pr_url: Optional[str] = None  # pull request opened by the implement runner
@@ -137,11 +170,11 @@ class Question(SQLModel, table=True):
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    session_id: int = Field(foreign_key="session.id", index=True)
+    session_id: str = Field(foreign_key="session.id", index=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     question: str
-    kind: str = "question"  # question | approval
-    meta: str = "{}"  # JSON: action key for approvals
+    kind: str = "question"  # question | approval | user_required
+    meta: str = "{}"  # JSON: action key for approvals; command/details for user_required
     options: str = "[]"  # JSON list of suggested answers
     status: str = "open"  # open | answered | dismissed
     answer: Optional[str] = None
@@ -162,7 +195,7 @@ class Goal(SQLModel, table=True):
     description: str = ""
     success_criteria: str = ""
     status: str = "drafting"  # drafting | active | done | dropped
-    session_id: Optional[int] = Field(default=None, foreign_key="session.id")
+    session_id: Optional[str] = Field(default=None, foreign_key="session.id")
     milestone_id: Optional[int] = Field(default=None, foreign_key="milestone.id")
     spec_path: Optional[str] = None
     created_at: datetime = Field(default_factory=_now)
@@ -225,12 +258,34 @@ class Passkey(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
 
 
+class MemoryCandidate(SQLModel, table=True):
+    """A proposed memory awaiting approval (or auto-accepted at high confidence).
+
+    Conversation turns become candidates; durable engineering classes are
+    auto-accepted into Totem, the rest wait for the owner in the Memory view.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    session_id: Optional[str] = Field(default=None, foreign_key="session.id")
+    run_id: Optional[str] = None
+    type: str = "observation"
+    title: str
+    statement: str
+    tags: str = "[]"  # JSON list
+    confidence: float = 0.5
+    source: str = "agent"  # agent | writer | checkpoint
+    status: str = "pending"  # pending | accepted | rejected
+    created_at: datetime = Field(default_factory=_now)
+    decided_at: Optional[datetime] = None
+
+
 class Usage(SQLModel, table=True):
     """Token usage for one agent run: a chat turn, subagent, or one-shot job."""
 
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
-    session_id: Optional[int] = Field(default=None, foreign_key="session.id", index=True)
+    session_id: Optional[str] = Field(default=None, foreign_key="session.id", index=True)
     action: str = "chat"  # chat | docs | triage | memory-fix | schedule action
     model: str = ""
     prompt_tokens: int = 0
@@ -290,10 +345,11 @@ class BackgroundTask(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
-    session_id: Optional[int] = Field(default=None, foreign_key="session.id", index=True)
-    kind: str = "agent"  # agent | subagent
+    session_id: Optional[str] = Field(default=None, foreign_key="session.id", index=True)
+    kind: str = "agent"  # agent | subagent | swarm
     description: str = ""
     instruction: str = ""
+    payload: str = "{}"  # JSON extras for kind="swarm" (directive, tasks, scope)
     action: str = "chat"  # action key, or agent profile name for subagents
     status: str = "queued"  # queued | running | done | error | stopped | lost
     result: str = ""
@@ -310,7 +366,8 @@ class InboxItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     kind: str  # pr | issue | run
-    external_id: str  # dedupe key within a project, e.g. "pr:12"
+    external_id: str  # dedupe key within a project, e.g. "pr:12" or "api:pr:12"
+    repo: str = ""  # repo alias the item came from ("" = primary)
     title: str
     subtitle: str = ""
     url: Optional[str] = None

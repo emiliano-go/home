@@ -8,6 +8,7 @@ can use a single agent for everything while advanced setups specialise.
 
 from sqlmodel import Session, select
 
+from hestia.providers.base import resolve_model
 from hestia.registry.models import ActionDefault, AgentConfig
 
 ACTIONS: list[dict] = [
@@ -60,6 +61,39 @@ ACTIONS: list[dict] = [
         "tools": "repo,files,github,memory,workspace,tasks,agents,background,automations",
     },
     {
+        "key": "image",
+        "label": "Generate images",
+        "description": "Turn text prompts into images saved in the project workspace.",
+        "tools": "images,workspace",
+    },
+    {
+        "key": "browser",
+        "label": "Browse the web",
+        "description": (
+            "Drive a real browser: autonomous web tasks and UI debugging with "
+            "browser-use."
+        ),
+        "tools": "browser",
+    },
+    {
+        "key": "memory-writer",
+        "label": "Write memories",
+        "description": (
+            "Curate a finished turn into durable Totem memories with a cheap "
+            "model, so the main agent never waits."
+        ),
+        "tools": "memory",
+    },
+    {
+        "key": "image-reader",
+        "label": "Read images",
+        "description": (
+            "Describe screenshots and images for the main agent, so expensive "
+            "models do not pay vision tokens."
+        ),
+        "tools": "browser",
+    },
+    {
         "key": "docs",
         "label": "Generate documentation",
         "description": (
@@ -76,6 +110,16 @@ ACTIONS: list[dict] = [
             "pull request, then move the task to review."
         ),
         "tools": "repo,files,github,workspace,tasks",
+    },
+    {
+        "key": "bulk-edit",
+        "label": "Bulk code edits",
+        "description": (
+            "Delegate large mechanical changes (doc sweeps, renames, typo "
+            "fixes) to a cheap write agent: it edits files in the clone, the "
+            "principal commits and opens the pull request."
+        ),
+        "tools": "repo,files,writes,workspace",
     },
     {
         "key": "capture",
@@ -131,3 +175,21 @@ def resolve_action(db: Session, key: str) -> AgentConfig | None:
             if agent:
                 return agent
     return db.exec(select(AgentConfig).where(AgentConfig.name == key)).first()
+
+
+def effective_provider(agent, provider):
+    """The provider with its model and reasoning effort from the agent.
+
+    Lets every downstream ``provider.model`` use the right model without
+    threading it through each call site; the effort rides along as an extra
+    attribute on the returned copy (not a Provider column).
+    """
+    if provider is None:
+        return None
+    model = resolve_model(agent, provider)
+    effort = getattr(agent, "reasoning_effort", None) or getattr(
+        provider, "reasoning_effort", None
+    )
+    if (model and model != provider.model) or effort:
+        return provider.model_copy(update={"model": model, "reasoning_effort": effort})
+    return provider

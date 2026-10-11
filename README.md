@@ -47,10 +47,11 @@ query GitHub, and write workspace files (plans, specs), but they do not modify t
 
 ## Features
 
-- **Project workspaces**: register a project by Git URL; `hestia` clones it
-  under the data volume and links the repository, its documentation, and its
-  `AGENTS.md` into one workspace. A pull button refreshes the clone and the
-  instructions.
+- **Project workspaces**: a creation wizard builds a project from one or many
+  Git repositories (each with a short alias) or from nothing at all; `hestia`
+  clones them under the data volume and links the repositories, their
+  documentation, and `AGENTS.md` into one workspace. The Repositories page
+  shows per-repo status, and pull refreshes all clones or a single one.
 - **Totem memory in the agent's tools**: the agent's MCP-style toolset
   includes `memory_search`, `memory_get`, `memory_list`, `memory_create`,
   `memory_update`, and `memory_delete`, backed by a per-project
@@ -115,6 +116,10 @@ query GitHub, and write workspace files (plans, specs), but they do not modify t
 - **Agent questions**: the agent can ask you a blocking question with `ask_user`
   (optionally with choices). The question is stored on the chat session, pushes
   a notification, and survives page reloads; your next message is the answer.
+- **Manual steps**: when the work is blocked on something only you can do (run a
+  sudo command, sign a commit with GPG, log into a service), `user_required` ends
+  the turn with a card showing the exact command to copy, and continues once you
+  confirm.
 - **Time aware assistant settings**: the system prompt carries the current time,
   your timezone, name, and standing instructions (Settings, Assistant tab).
 - **Reminders**: ask the agent ("remind me tomorrow at 9") or add one in the
@@ -128,6 +133,13 @@ query GitHub, and write workspace files (plans, specs), but they do not modify t
   the last result.
 - **Web fetch**: the agent can read static pages (SSRF guarded, no JavaScript
   rendering), gated by a setting.
+- **Browser (optional)**: with the `browser` extra (`uv sync --extra browser`
+  plus `browser-use install`; included in the Docker image) the agent runs
+  autonomous multi-step web tasks and debugs UIs on a persistent session
+  (open, screenshot, content, click, type, eval). Attach to your own Chrome
+  over CDP to reuse logins; localhost requires the per-project "local browser"
+  toggle. An optional cheap **image-reader** agent describes screenshots so the
+  main model never pays vision tokens.
 - **Approval gates**: opt-in per project; `git_push` and `gh_open_pr` require an
   approved request from chat when enabled.
 - **Suggested work**: "Suggest next work" on the board proposes 2 to 5 backlog

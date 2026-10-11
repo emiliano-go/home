@@ -1,4 +1,4 @@
-"""Passkey authentication for the single Home owner.
+"""Passkey authentication for the single Hestia owner.
 
 Opt-in: when ``HESTIA_SETUP_TOKEN`` is unset the app stays open, as before. When
 set, every ``/api/*`` call except ``/api/auth/*`` needs a signed session

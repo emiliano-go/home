@@ -62,7 +62,7 @@ def as_dict(question: Question) -> dict:
 
 def create(
     db: Session,
-    session_id: int,
+    session_id: str,
     project_id: int,
     question: str,
     options: list[str] | None = None,
@@ -72,8 +72,8 @@ def create(
     question = (question or "").strip()
     if not question:
         raise InvalidQuestion("question is required")
-    if kind not in ("question", "approval"):
-        raise InvalidQuestion("kind must be question or approval")
+    if kind not in ("question", "approval", "user_required"):
+        raise InvalidQuestion("kind must be question, approval, or user_required")
     row = Question(
         session_id=session_id,
         project_id=project_id,
@@ -88,13 +88,13 @@ def create(
     return row
 
 
-def list_for_session(db: Session, session_id: int) -> list[Question]:
+def list_for_session(db: Session, session_id: str) -> list[Question]:
     return db.exec(
         select(Question).where(Question.session_id == session_id).order_by(Question.id)
     ).all()
 
 
-def open_for_session(db: Session, session_id: int) -> list[Question]:
+def open_for_session(db: Session, session_id: str) -> list[Question]:
     return db.exec(
         select(Question)
         .where(Question.session_id == session_id, Question.status == "open")

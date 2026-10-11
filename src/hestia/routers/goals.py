@@ -5,7 +5,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from hestia import settings, actions, goals, milestones as milestones_mod, totem_store, usage
+from hestia import settings, actions, goals, milestones as milestones_mod, repos, totem_store, usage
 from hestia.agent import loop as agent_loop
 from hestia.agent.prompt import build_system_prompt
 from hestia.providers.base import OpenAIClient, resolve_api_key
@@ -80,7 +80,7 @@ def _spec_path(goal: Goal) -> str:
     return goal.spec_path or f"goals/{goals.slugify(goal.title)}/spec.md"
 
 
-def _transcript(s: Session, session_id: int | None, limit: int = 20) -> str:
+def _transcript(s: Session, session_id: str | None, limit: int = 20) -> str:
     if not session_id:
         return "(no discussion yet)"
     rows = s.exec(
@@ -106,7 +106,7 @@ def _provider_for(s: Session, project: Project, body: dict) -> Provider:
     provider = s.get(Provider, provider_id) if provider_id else None
     if not provider:
         raise HTTPException(400, "no provider configured for this project")
-    return provider
+    return actions.effective_provider(agent, provider)
 
 
 @router.get("/projects/{project_id}/goals")
@@ -188,7 +188,10 @@ async def _run_goal_agent(s: Session, goal: Goal, provider: Provider, system: st
     for tool in task_tools.make_tools(s):
         registry.register(tool)
     client = OpenAIClient(
-        provider.base_url, resolve_api_key(provider), provider.model
+        provider.base_url,
+        resolve_api_key(provider),
+        provider.model,
+        reasoning_effort=getattr(provider, "reasoning_effort", None),
     )
     messages = [
         {"role": "system", "content": system},
@@ -196,7 +199,7 @@ async def _run_goal_agent(s: Session, goal: Goal, provider: Provider, system: st
     ]
     final = ""
     tokens: dict = {}
-    async for event in agent_loop.run_turn(ctx, client, registry, messages, max_turns=10):
+    async for event in agent_loop.run_turn(ctx, client, registry, messages):
         if event["type"] == "usage":
             usage.merge(tokens, event.get("usage"))
             continue
@@ -210,7 +213,7 @@ async def _run_goal_agent(s: Session, goal: Goal, provider: Provider, system: st
 def _goal_system(s: Session, goal: Goal, provider: Provider, task: str, extra: str) -> str:
     project = s.get(Project, goal.project_id)
     agent = actions.resolve_action(s, "goal")
-    digest = totem_store.digest(project.local_path, task=task)
+    digest = totem_store.digest(repos.memory_root(project), task=task)
     system = build_system_prompt(
         ProjectContext.from_project(project),
         agents_md=project.agents_md,

@@ -23,6 +23,8 @@ export function AboutView({ projectId, onDeleted }) {
   const [enforce, setEnforce] = useState(false)
   const [savingBudget, setSavingBudget] = useState(false)
   const [testingNotify, setTestingNotify] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+  const [sandboxBusy, setSandboxBusy] = useState(false)
   const [notifyResult, setNotifyResult] = useState(null)
   const [notifyError, setNotifyError] = useState(null)
 
@@ -62,6 +64,36 @@ export function AboutView({ projectId, onDeleted }) {
         reload()
       })
       .catch((e) => setActionError(e.message || String(e)))
+  }
+
+  const undoTurn = () => {
+    setUndoing(true)
+    setActionError(null)
+    api
+      .revertProject(project.id)
+      .then(() => reload())
+      .catch((e) => setActionError(e.message || String(e)))
+      .finally(() => setUndoing(false))
+  }
+
+  const promoteSandbox = () => {
+    setSandboxBusy(true)
+    setActionError(null)
+    api
+      .promoteSandbox(project.id)
+      .then(() => reload())
+      .catch((e) => setActionError(e.message || String(e)))
+      .finally(() => setSandboxBusy(false))
+  }
+
+  const discardSandbox = () => {
+    setSandboxBusy(true)
+    setActionError(null)
+    api
+      .discardSandbox(project.id)
+      .then(() => reload())
+      .catch((e) => setActionError(e.message || String(e)))
+      .finally(() => setSandboxBusy(false))
   }
 
   const saveBudget = () => {
@@ -122,14 +154,29 @@ export function AboutView({ projectId, onDeleted }) {
         </ConfirmModal>
       )}
       <dl className="kv">
-        <dt>Repo</dt>
+        <dt>Description</dt>
+        <dd>{project.description || '—'}</dd>
+        <dt>Repositories</dt>
         <dd>
-          <a href={project.repo_url} target="_blank" rel="noreferrer">
-            {project.repo_url}
-          </a>
+          {(project.repos || []).length === 0 ? (
+            <span className="muted">none (workspace-only project)</span>
+          ) : (
+            <div className="about-repos">
+              {project.repos.map((r) => (
+                <div key={r.alias} className="about-repo">
+                  <span className="badge accent">{r.alias}</span>
+                  {r.is_primary && <span className="badge">primary</span>}
+                  <a href={r.repo_url} target="_blank" rel="noreferrer">
+                    {r.repo_url}
+                  </a>
+                  <span className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+                    {r.local_path}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </dd>
-        <dt>Local path</dt>
-        <dd>{project.local_path}</dd>
         <dt>Branch</dt>
         <dd>{status.branch || 'unknown'}</dd>
         <dt>Head</dt>
@@ -228,6 +275,54 @@ export function AboutView({ projectId, onDeleted }) {
             />
             Require your approval before push or PR
           </label>
+          <label className="dep-item" style={{ flex: 'none' }}>
+            <input
+              type="checkbox"
+              checked={!!project.require_plan}
+              onChange={(e) =>
+                api
+                  .updateProject(project.id, { require_plan: e.target.checked })
+                  .then(reload)
+                  .catch((err) => setActionError(err.message))
+              }
+            />
+            Require a written plan, with a drift check after each step
+          </label>
+          <label className="dep-item" style={{ flex: 'none' }}>
+            <span className="muted">Write mode</span>
+            <select
+              value={project.write_mode || 'auto'}
+              onChange={(e) =>
+                api
+                  .updateProject(project.id, { write_mode: e.target.value })
+                  .then(reload)
+                  .catch((err) => setActionError(err.message))
+              }
+            >
+              <option value="ask">ask — approve each edit and command</option>
+              <option value="auto">auto — edits and shell run freely</option>
+              <option value="yolo">yolo — auto, for throwaway sandboxes</option>
+            </select>
+          </label>
+          <div className="row">
+            <button className="btn" onClick={undoTurn} disabled={undoing}>
+              {undoing ? 'Reverting…' : 'Undo last turn'}
+            </button>
+            <span className="muted">
+              Restores the clone to the snapshot taken before the last turn.
+            </span>
+          </div>
+          {project.write_mode === 'yolo' && (
+            <div className="row">
+              <button className="btn" onClick={promoteSandbox} disabled={sandboxBusy}>
+                Promote sandbox
+              </button>
+              <button className="btn danger" onClick={discardSandbox} disabled={sandboxBusy}>
+                Discard sandbox
+              </button>
+              <span className="muted">Yolo turns run against a throwaway /tmp clone.</span>
+            </div>
+          )}
           <div className="row">
             <button className="btn danger" onClick={() => setWrites(false)}>
               Disable git writes
@@ -261,6 +356,26 @@ export function AboutView({ projectId, onDeleted }) {
           )}
         </>
       )}
+      <h3 className="faint" style={{ fontSize: 13, fontWeight: 600 }}>
+        Browser
+      </h3>
+      <p className="note">
+        The agent can browse public sites. Allow localhost so it can debug this project's dev
+        server (for example <code>http://localhost:5173</code>).
+      </p>
+      <label className="dep-item" style={{ flex: 'none' }}>
+        <input
+          type="checkbox"
+          checked={!!project.allow_local_browser}
+          onChange={(e) =>
+            api
+              .updateProject(project.id, { allow_local_browser: e.target.checked })
+              .then(reload)
+              .catch((err) => setActionError(err.message))
+          }
+        />
+        Allow the browser to reach localhost and private addresses
+      </label>
       <h3 className="faint" style={{ fontSize: 13, fontWeight: 600 }}>
         Notifications
       </h3>

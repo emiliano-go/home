@@ -17,6 +17,7 @@ from hestia.routers import (
     auth as auth_router,
     capture,
     chat,
+    decision,
     docs,
     github,
     goals,
@@ -29,6 +30,7 @@ from hestia.routers import (
     projects,
     providers,
     reminders,
+    runs,
     schedules,
     search,
     sessions,
@@ -54,6 +56,9 @@ async def lifespan(app: FastAPI):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        from hestia.tools import browser as browser_tools
+
+        await asyncio.to_thread(browser_tools.manager.shutdown)
 
 
 def create_app() -> FastAPI:
@@ -84,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(capture.router)
     app.include_router(implement.router)
     app.include_router(jobs_router.router)
+    app.include_router(runs.router)
     app.include_router(providers.router)
     app.include_router(sessions.router)
     app.include_router(agents.router)
@@ -99,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router.router)
     app.include_router(github.router)
     app.include_router(skills.router)
+    app.include_router(decision.router)
 
     dist = find_web_dist()
     if dist:

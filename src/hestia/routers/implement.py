@@ -25,6 +25,11 @@ def _brief(task: Task, blocked_by: list[int]) -> str:
         lines += ["", f"Acceptance criteria: {task.acceptance}"]
     if blocked_by:
         lines += ["", f"Note: blocked by task {blocked_by} (should be done)."]
+    if task.repo:
+        lines += [
+            "",
+            f'Repository: {task.repo} (pass repo="{task.repo}" to git/file tools).',
+        ]
     lines += [
         "",
         "Work on a new branch, make focused commits, push, and open a pull",

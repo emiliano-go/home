@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
-from hestia import actions, events, inbox, notify, overview, reminders, settings, taskboard, totem_store, usage, watchers
+from hestia import actions, events, inbox, notify, overview, reminders, repos, settings, taskboard, totem_store, usage, watchers
 from hestia.agent.prompt import build_system_prompt
 from hestia.agent.run import run_once
 from hestia.registry.db import engine
@@ -118,9 +118,10 @@ async def _maybe_send_briefing(db: Session) -> None:
             agent = actions.resolve_action(db, "chat")
             provider_id = (agent.provider_id if agent else None) or project.default_provider_id
             provider = db.get(Provider, provider_id) if provider_id else None
+            provider = actions.effective_provider(agent, provider)
             if provider is not None:
                 digest = totem_store.digest(
-                    project.local_path, task="Write the briefing commentary"
+                    repos.memory_root(project), task="Write the briefing commentary"
                 )
                 system = build_system_prompt(
                     ProjectContext.from_project(project),
@@ -138,7 +139,6 @@ async def _maybe_send_briefing(db: Session) -> None:
                     system,
                     "Write the briefing commentary.",
                     groups="workspace,repo,files",
-                    max_turns=4,
                     tasks_db=db,
                 )
                 usage.record(
@@ -264,6 +264,7 @@ async def _agent_narrative(db: Session, project: Project, digest: str, prompt: s
     agent = actions.resolve_action(db, "chat")
     provider_id = (agent.provider_id if agent else None) or project.default_provider_id
     provider = db.get(Provider, provider_id) if provider_id else None
+    provider = actions.effective_provider(agent, provider)
     if provider is None:
         return None
     system = build_system_prompt(
@@ -282,7 +283,6 @@ async def _agent_narrative(db: Session, project: Project, digest: str, prompt: s
         system,
         "Write it.",
         groups="workspace,repo,files,tasks",
-        max_turns=6,
         tasks_db=db,
     )
     usage.record(db, project.id, action="plan", model=provider.model, usage=tokens)
@@ -412,6 +412,7 @@ async def run_schedule(schedule_id: int, event: dict | None = None) -> dict | No
             (agent.provider_id if agent else None) or project.default_provider_id
         )
         provider = db.get(Provider, provider_id) if provider_id else None
+        provider = actions.effective_provider(agent, provider)
 
         budget = usage.budget_state(db, project)
         if project.budget_enforced and budget["over"]:
@@ -452,7 +453,7 @@ async def run_schedule(schedule_id: int, event: dict | None = None) -> dict | No
                         f"({payload.get('title', '')})"
                     )
                 schedule.last_event_key = event.get("key", "")
-            digest = totem_store.digest(project.local_path, task=instruction)
+            digest = totem_store.digest(repos.memory_root(project), task=instruction)
             system = build_system_prompt(
                 ProjectContext.from_project(project),
                 agents_md=project.agents_md,
@@ -470,7 +471,6 @@ async def run_schedule(schedule_id: int, event: dict | None = None) -> dict | No
                 system,
                 instruction or "Run the scheduled job.",
                 groups=groups,
-                max_turns=agent.max_turns if agent else 8,
                 tasks_db=db,
             )
             usage.record(

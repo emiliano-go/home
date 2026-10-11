@@ -52,6 +52,7 @@ def make_tools(db: Session) -> list[Tool]:
             ),
             handler=name_handler,
             group="memory",
+            effect="write",
         ),
         Tool(
             name="remember_preference",
@@ -68,6 +69,7 @@ def make_tools(db: Session) -> list[Tool]:
             ),
             handler=remember_handler,
             group="memory",
+            effect="write",
         ),
         Tool(
             name="list_preferences",
@@ -85,5 +87,6 @@ def make_tools(db: Session) -> list[Tool]:
             ),
             handler=forget_handler,
             group="memory",
+            effect="write",
         ),
     ]

@@ -66,6 +66,40 @@ def make_tools(db) -> list[Tool]:
             }
         )
 
+    def required_handler(ctx: ProjectContext, args: dict) -> dict:
+        if not ctx.session_id:
+            raise ValueError("user_required only works inside an interactive chat session")
+        action = (args.get("action") or "").strip()
+        if not action:
+            raise ValueError("action is required")
+        command = (args.get("command") or "").strip()
+        details = (args.get("details") or "").strip()
+        options = [str(o).strip() for o in (args.get("options") or []) if str(o).strip()][:6] or ["Done", "Skip"]
+        meta = {"command": command, "details": details}
+        row = questions_mod.create(
+            db, ctx.session_id, ctx.project_id, action, options,
+            kind="user_required", meta=meta,
+        )
+        message = "\n".join(p for p in (details, f"$ {command}" if command else "") if p)
+        notify.send(
+            f"Action needed: {action}",
+            message,
+            priority="high",
+            tags=["warning"],
+            url=settings.notification_url(
+                f"/p/{ctx.project_id}/chat?session={ctx.session_id}"
+            ),
+        )
+        raise AgentPause(
+            {
+                "id": row.id,
+                "question": action,
+                "options": options,
+                "kind": "user_required",
+                "meta": meta,
+            }
+        )
+
     return [
         Tool(
             name="ask_user",
@@ -113,5 +147,41 @@ def make_tools(db) -> list[Tool]:
             ),
             handler=approve_handler,
             group="chat",
+        ),
+        Tool(
+            name="user_required",
+            description=(
+                "Tell the owner they must do something outside the agent before you can "
+                "continue: run a command with sudo, sign a commit with their GPG key, log "
+                "into a service, paste a token. The turn ends and a card with the command "
+                "is shown in the chat; the owner's next message confirms it. Use it only "
+                "when the work is truly blocked on a manual step the agent cannot perform; "
+                "use notify for things that can wait."
+            ),
+            parameters=schema(
+                {
+                    "action": {
+                        "type": "string",
+                        "description": "short label, e.g. 'Sign the release commit with GPG'",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "the exact command to run, shown verbatim (optional)",
+                    },
+                    "details": {
+                        "type": "string",
+                        "description": "why it is needed and any extra steps (optional)",
+                    },
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "confirmation choices (default Done, Skip)",
+                    },
+                },
+                ["action"],
+            ),
+            handler=required_handler,
+            group="chat",
+            delegable=False,
         ),
     ]

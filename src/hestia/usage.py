@@ -69,7 +69,7 @@ def record(
     action: str = "chat",
     model: str = "",
     usage: dict | None = None,
-    session_id: int | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Store one agent run's token counts. No-ops when the provider sent none."""
     if not usage:

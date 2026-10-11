@@ -284,6 +284,34 @@ export function AssistantPanel() {
         />
         Allow the agent to fetch web pages (watchers use this too)
       </label>
+      <label className="dep-item" style={{ flex: 'none' }}>
+        <input
+          type="checkbox"
+          checked={form.browser_enabled === '1'}
+          onChange={(e) => field('browser_enabled', e.target.checked ? '1' : '0')}
+        />
+        Allow the agent to drive a real browser (browser-use)
+      </label>
+      <label className="field">
+        <span className="field-label">Browser CDP URL (optional)</span>
+        <input
+          value={form.browser_cdp_url || ''}
+          onChange={(e) => field('browser_cdp_url', e.target.value)}
+          placeholder="http://localhost:9222"
+        />
+        <span className="field-hint">
+          Attach to your own Chrome (started with --remote-debugging-port=9222) to reuse your
+          logins. Leave empty to use the bundled headless browser.
+        </span>
+      </label>
+      <label className="dep-item" style={{ flex: 'none' }}>
+        <input
+          type="checkbox"
+          checked={form.show_thinking !== '0'}
+          onChange={(e) => field('show_thinking', e.target.checked ? '1' : '0')}
+        />
+        Open the model's thinking cards by default (thinking is always recorded)
+      </label>
       <div className="row" style={{ marginBottom: 0 }}>
         <button className="btn primary" disabled={saving}>
           {saving ? (

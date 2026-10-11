@@ -238,7 +238,7 @@ def make_tools(db: Session) -> list[Tool]:
         Tool(
             name="milestone_list",
             description="List the project's milestones (roadmap goals) with task progress.",
-            parameters=schema({"properties": {}, "required": []}, []),
+            parameters=schema({}, []),
             handler=milestone_list_handler,
             group="tasks",
         ),

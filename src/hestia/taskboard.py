@@ -103,6 +103,18 @@ def blocked_map(db: Session, project_id: int) -> dict[int, list[int]]:
     return out
 
 
+def _clean_repo(db: Session, project_id: int, repo) -> str | None:
+    repo = (repo or "").strip()
+    if not repo:
+        return None
+    from hestia import repos as repo_helpers
+
+    aliases = {r.alias for r in repo_helpers.repos_for(db, project_id)}
+    if repo not in aliases:
+        raise InvalidTask(f"unknown repo alias: {repo}")
+    return repo
+
+
 def as_dict(task: Task, blocked_by: list[int] | None = None) -> dict:
     return {
         "id": task.id,
@@ -118,6 +130,7 @@ def as_dict(task: Task, blocked_by: list[int] | None = None) -> dict:
         "acceptance": task.acceptance or "",
         "source": task.source or "user",
         "github_issue": task.github_issue,
+        "repo": task.repo,
         "due_at": task.due_at.isoformat() if task.due_at else None,
         "pr_url": task.pr_url,
         "created_at": task.created_at.isoformat() if task.created_at else None,
@@ -208,6 +221,7 @@ def create(
     acceptance: str = "",
     source: str = "user",
     due_at=None,
+    repo: str | None = None,
 ) -> Task:
     title = (title or "").strip()
     if not title:
@@ -222,6 +236,7 @@ def create(
     task = Task(
         project_id=project_id,
         milestone_id=milestone_id,
+        repo=_clean_repo(db, project_id, repo),
         title=title,
         description=description or "",
         status=status,
@@ -249,6 +264,8 @@ def update(db: Session, task: Task, fields: dict) -> Task:
         task.description = fields["description"] or ""
     if "acceptance" in fields:
         task.acceptance = fields["acceptance"] or ""
+    if "repo" in fields:
+        task.repo = _clean_repo(db, task.project_id, fields["repo"])
     if "status" in fields:
         new_status = _clean(fields["status"], STATUSES, "status", task.status)
         if (

@@ -9,40 +9,78 @@ export const TOOL_GROUPS = [
     key: 'repo',
     label: 'Repository',
     desc: 'Git history, diffs, branches, and showing commits in the clone.',
+    delegable: true,
   },
-  { key: 'files', label: 'Files', desc: 'List, read, and search files in the repository.' },
-  { key: 'github', label: 'GitHub', desc: 'Commits, pull requests, issues, and CI runs.' },
-  { key: 'memory', label: 'Memory', desc: 'Read and write Totem project memory.' },
+  {
+    key: 'files',
+    label: 'Files',
+    desc: 'List, read, and search files in the repository.',
+    delegable: true,
+  },
+  {
+    key: 'github',
+    label: 'GitHub',
+    desc: 'Commits, pull requests, issues, and CI runs (read-only).',
+    delegable: true,
+  },
+  {
+    key: 'memory',
+    label: 'Memory',
+    desc: 'Read Totem project memory, and write it in write mode.',
+    delegable: true,
+  },
   {
     key: 'workspace',
     label: 'Workspace',
-    desc: 'Write plans, specs, and docs to the project workspace.',
+    desc: 'Read workspace files, and write plans/specs/docs in write mode.',
+    delegable: true,
+  },
+  {
+    key: 'writes',
+    label: 'Code writes',
+    desc: 'Edit files in the clone (needs git writes). Subagents edit only; branch/commit/push stay with the principal.',
+    delegable: true,
+  },
+  {
+    key: 'images',
+    label: 'Images',
+    desc: 'Generate images from prompts. Principal agent only.',
+    delegable: false,
+  },
+  {
+    key: 'browser',
+    label: 'Browser',
+    desc: 'Autonomous web tasks and UI debugging. Principal agent only.',
+    delegable: false,
   },
   {
     key: 'tasks',
     label: 'Task board',
-    desc: 'Create and move tasks on the project kanban. Main chat agents only.',
+    desc: 'Create and move tasks on the project kanban. Principal agent only.',
+    delegable: false,
   },
   {
     key: 'agents',
     label: 'Delegation',
-    desc: 'Hand subtasks to other agents. Main chat agents only.',
+    desc: 'Hand subtasks to other agents. Principal agent only.',
+    delegable: false,
   },
 ]
 
 export const ALL_TOOLS = TOOL_GROUPS.map((g) => g.key)
+export const DELEGABLE_GROUPS = TOOL_GROUPS.filter((g) => g.delegable)
 
-export function ToolGroupPicker({ value, onChange }) {
+export function ToolGroupPicker({ value, onChange, groups = TOOL_GROUPS }) {
   const selected = new Set(value)
   const toggle = (k) => {
     const next = new Set(selected)
     if (next.has(k)) next.delete(k)
     else next.add(k)
-    onChange(TOOL_GROUPS.filter((g) => next.has(g.key)).map((g) => g.key))
+    onChange(groups.filter((g) => next.has(g.key)).map((g) => g.key))
   }
   return (
     <div className="tool-groups">
-      {TOOL_GROUPS.map((g) => (
+      {groups.map((g) => (
         <button
           type="button"
           key={g.key}
@@ -74,19 +112,26 @@ export function AgentForm({ providers, presets, initial, onSubmit, onCancel, sav
   const [form, setForm] = useState(() => ({
     name: initial?.name || '',
     provider_id: initial?.provider_id ? String(initial.provider_id) : '',
+    model: initial?.model || '',
+    reasoning_effort: initial?.reasoning_effort || '',
     system_prompt: initial?.system_prompt || '',
     tools: toTools(initial?.tools),
+    mode: initial?.mode || 'read',
     max_turns: initial?.max_turns != null ? String(initial.max_turns) : '6',
   }))
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const selectedProvider = providers.find((p) => String(p.id) === form.provider_id)
+  const modelOptions = selectedProvider?.models || []
   const applyPreset = (key) => {
     const p = presets[key]
     if (!p) return
     setForm((f) => ({
       ...f,
       name: f.name || p.name || key,
+      reasoning_effort: p.reasoning_effort || f.reasoning_effort,
       system_prompt: p.system_prompt || '',
       tools: toTools(p.tools),
+      mode: p.mode || 'read',
       max_turns: p.max_turns != null ? String(p.max_turns) : f.max_turns,
     }))
   }
@@ -95,8 +140,11 @@ export function AgentForm({ providers, presets, initial, onSubmit, onCancel, sav
     onSubmit({
       name: form.name,
       provider_id: form.provider_id ? parseInt(form.provider_id, 10) : undefined,
+      model: form.model,
+      reasoning_effort: form.reasoning_effort || null,
       system_prompt: form.system_prompt,
       tools: form.tools,
+      mode: form.mode,
       max_turns: form.max_turns ? parseInt(form.max_turns, 10) : undefined,
     })
   }
@@ -121,29 +169,80 @@ export function AgentForm({ providers, presets, initial, onSubmit, onCancel, sav
           <input value={form.name} onChange={set('name')} placeholder="default" required />
         </label>
         <label className="field">
-          <span className="field-label">Provider / model</span>
-          <select value={form.provider_id} onChange={set('provider_id')} required>
+          <span className="field-label">Provider</span>
+          <select
+            value={form.provider_id}
+            onChange={(e) => setForm((f) => ({ ...f, provider_id: e.target.value, model: '' }))}
+            required
+          >
             <option value="">Choose a provider...</option>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({p.model})
+                {p.name}
               </option>
             ))}
           </select>
         </label>
+        <label className="field">
+          <span className="field-label">Model</span>
+          <select value={form.model} onChange={set('model')} disabled={!selectedProvider}>
+            <option value="">
+              Provider default{selectedProvider?.model ? ` (${selectedProvider.model})` : ''}
+            </option>
+            {modelOptions.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">Reasoning effort</span>
+          <select value={form.reasoning_effort} onChange={set('reasoning_effort')}>
+            <option value="">Model default</option>
+            <option value="none">None (thinking off)</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="max">Max</option>
+          </select>
+          <span className="field-hint">Sent as reasoning_effort. Some models reject medium.</span>
+        </label>
+      </div>
+      <div className="field">
+        <span className="field-label">Delegation mode</span>
+        <div className="segmented">
+          <button
+            type="button"
+            className={form.mode === 'read' ? 'on' : ''}
+            onClick={() => setForm((f) => ({ ...f, mode: 'read' }))}
+          >
+            Read
+          </button>
+          <button
+            type="button"
+            className={form.mode === 'write' ? 'on' : ''}
+            onClick={() => setForm((f) => ({ ...f, mode: 'write' }))}
+          >
+            Write
+          </button>
+        </div>
+        <span className="field-hint">
+          Read: explore and report only. Write: may also write workspace files and project
+          memory. Project code stays read-only either way.
+        </span>
       </div>
       <div className="field">
         <span className="field-label">What this agent can do</span>
         <ToolGroupPicker
           value={form.tools}
+          groups={DELEGABLE_GROUPS}
           onChange={(tools) => setForm((f) => ({ ...f, tools }))}
         />
-        <span className="field-hint">Leave everything off for a plain chat model.</span>
+        <span className="field-hint">
+          Images, the task board, and delegation belong to the principal agent only.
+        </span>
       </div>
-      <label className="field narrow">
-        <span className="field-label">Max tool turns</span>
-        <input type="number" min="1" value={form.max_turns} onChange={set('max_turns')} />
-      </label>
       <label className="field">
         <span className="field-label">System prompt (optional)</span>
         <textarea
@@ -178,7 +277,10 @@ export function SimpleAgentForm({ defaultAgent, providers, saving, error, onSave
   const [providerId, setProviderId] = useState(
     defaultAgent?.provider_id ? String(defaultAgent.provider_id) : ''
   )
+  const [model, setModel] = useState(defaultAgent?.model || '')
   const [prompt, setPrompt] = useState(defaultAgent?.system_prompt || '')
+
+  const selectedProvider = providers.find((p) => String(p.id) === providerId)
 
   const submit = (e) => {
     e.preventDefault()
@@ -186,8 +288,10 @@ export function SimpleAgentForm({ defaultAgent, providers, saving, error, onSave
     onSave({
       name: defaultAgent?.name || 'default',
       provider_id: parseInt(providerId, 10),
+      model,
       system_prompt: prompt,
       tools: ALL_TOOLS,
+      mode: 'write',
       max_turns: defaultAgent?.max_turns || 10,
     })
   }
@@ -222,12 +326,32 @@ export function SimpleAgentForm({ defaultAgent, providers, saving, error, onSave
       </div>
       <form className="agent-form" onSubmit={submit}>
         <label className="field">
-          <span className="field-label">Provider / model</span>
-          <select value={providerId} onChange={(e) => setProviderId(e.target.value)} required>
+          <span className="field-label">Provider</span>
+          <select
+            value={providerId}
+            onChange={(e) => {
+              setProviderId(e.target.value)
+              setModel('')
+            }}
+            required
+          >
             <option value="">Choose a provider...</option>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({p.model})
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">Model</span>
+          <select value={model} onChange={(e) => setModel(e.target.value)} disabled={!selectedProvider}>
+            <option value="">
+              Provider default{selectedProvider?.model ? ` (${selectedProvider.model})` : ''}
+            </option>
+            {(selectedProvider?.models || []).map((m) => (
+              <option key={m} value={m}>
+                {m}
               </option>
             ))}
           </select>
@@ -424,8 +548,10 @@ export function AgentsPage({ onOpenSettings }) {
                         {a.id === chatDefaultId && <span className="badge accent">default</span>}
                       </div>
                       <div className="agent-card-meta">
-                        {providerName(a.provider_id)} · {providerModel(a.provider_id) || 'model'} ·{' '}
-                        {toTools(a.tools).length} tool groups · {a.max_turns} turns
+                        {providerName(a.provider_id)} ·{' '}
+                        {a.model || providerModel(a.provider_id) || 'model'}
+                        {a.reasoning_effort ? ` (${a.reasoning_effort})` : ''} ·{' '}
+                        {a.mode || 'read'} mode · {toTools(a.tools).length} tool groups
                       </div>
                     </div>
                     <div className="agent-card-actions">

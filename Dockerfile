@@ -13,7 +13,8 @@ FROM python:3.14-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# pip install instead of COPY --from=ghcr.io so builds work where GHCR is blocked
+RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
@@ -21,7 +22,9 @@ COPY src ./src
 # Drop the dev-only editable path override for totem; uv then resolves it
 # from the git URL in the dependency spec.
 RUN sed -i '/^\[tool.uv.sources\]/,$d' pyproject.toml \
-    && uv sync --no-dev --no-editable
+    && uv sync --no-dev --no-editable --extra browser
+# Chromium + system libraries for browser-use (the optional browser extra).
+RUN /app/.venv/bin/browser-use install
 COPY --from=web /web/dist ./web/dist
 
 ENV DATA_DIR=/data \

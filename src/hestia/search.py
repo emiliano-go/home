@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
-from hestia import config, totem_store
+from hestia import config, repos, totem_store
 from hestia.registry.models import Project, Session as ChatSession
 from hestia.routers.workspace import _list_files
 
@@ -49,7 +49,7 @@ def global_search(db: Session, query: str, limit: int = 8) -> dict:
         if len(memories) >= limit:
             break
         try:
-            found = totem_store.search(p.local_path, q, limit=limit)
+            found = totem_store.search(repos.memory_root(p), q, limit=limit)
         except Exception:
             continue
         for m in found:

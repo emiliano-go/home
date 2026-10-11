@@ -40,6 +40,7 @@ export function HelpView() {
         <a href="#providers">Providers</a>
         <a href="#agents">Agents &amp; actions</a>
         <a href="#chat">Chat &amp; tools</a>
+        <a href="#browser">Browser</a>
         <a href="#memory">Memory</a>
         <a href="#background">Background tasks</a>
         <a href="#capture">Capture notes</a>
@@ -62,6 +63,12 @@ export function HelpView() {
           The <strong>Dashboard</strong> (the page you land on) shows your most recently opened
           projects, the latest conversations across all projects, and the newest files agents have
           generated.
+        </p>
+        <p>
+          A project's overview shows its branch, last commit (the local clone and the remote tip,
+          with how far behind it is), sync state, tasks, token usage, and GitHub activity. Git
+          values come from your local clone while GitHub values are fetched live, so they can differ
+          until you pull.
         </p>
       </Doc>
 
@@ -90,14 +97,29 @@ export function HelpView() {
 
       <Doc id="projects" title="Projects">
         <p>
-          A project is a Git repository plus a workspace. Hestia never modifies your code unless
-          you explicitly enable <em>Git writes</em> for the project: the agent can read files and
-          git history, and write files to a separate workspace, but not change the repository.
+          A project is a workspace plus one or more Git repositories. Hestia never modifies your
+          code unless you explicitly enable <em>Git writes</em> for the project: the agent can
+          read files and git history, and write files to a separate workspace, but not change the
+          repositories.
         </p>
         <ul>
           <li>
-            <strong>Add</strong> a project with the <code>+</code> next to <em>Projects</em> or the
-            <em>New project</em> button on the dashboard.
+            <strong>Create</strong> a project with the <code>+</code> next to <em>Projects</em> or
+            the <em>New project</em> button on the dashboard. The wizard asks for a name, a
+            description, one or more Git URLs with short aliases (one is the primary), and
+            optional provider, git-writes, and local-browser settings. A project can start with
+            no repositories at all.
+          </li>
+          <li>
+            <strong>Repositories</strong> tab: per-repo branch, last commit, sync state, and
+            GitHub counts, with pull, add, and remove actions. The agent can also clone a new
+            repository with <code>repo_add</code>; removal stays a human action.
+          </li>
+          <li>
+            <strong>Aliases</strong> are how the agent targets a repo: git, file, and GitHub
+            tools take an optional <code>repo</code> argument (for example <code>api</code> or
+            <code>web</code>); the primary is the default. Totem memory stays with the primary
+            repo (or the workspace for repo-less projects).
           </li>
           <li>
             <strong>Open</strong> a project from the sidebar or the dashboard. Opening updates
@@ -105,11 +127,11 @@ export function HelpView() {
           </li>
           <li>
             <strong>Pull</strong> latest changes and refresh <code>AGENTS.md</code> from the
-            <em>About</em> tab.
+            <em>About</em> tab or the Repositories page (all repos, or one).
           </li>
           <li>
             <strong>Delete</strong> a project from the <em>About</em> tab. This removes its registry
-            entry and clone.
+            entry and all clones.
           </li>
         </ul>
       </Doc>
@@ -382,9 +404,11 @@ export function HelpView() {
           ))}
         </div>
         <p className="help-note">
-          When an agent uses <strong>Delegation</strong>, it hands a read-only subtask to the agent
-          configured for an action and continues with the summary. Subagents cannot delegate
-          further.
+          When an agent uses <strong>Delegation</strong>, it hands a subtask to the agent
+          configured for an action and continues with the summary. Read mode explores and reports
+          (no writes); write mode may also write workspace files, curate memory, and edit files in
+          the clone when git writes are on, but never commits or pushes: the main agent reviews
+          the diff and does that. Subagents cannot delegate further.
         </p>
         <p>
           The agent can also <strong>ask you a question</strong> with <code>ask_user</code> when a
@@ -392,6 +416,55 @@ export function HelpView() {
           the question appears as a card in the chat with any suggested choices. It is stored on
           the session, so it survives reloads; your next message answers it and the agent
           continues. <em>Skip</em> dismisses it without an answer.
+        </p>
+        <p>
+          When the work is blocked on something only you can do, the agent uses
+          <code>user_required</code> instead: the turn ends with an <strong>Action
+          needed</strong> card showing the exact command (for example a <code>sudo</code>
+          step or a GPG-signed commit) to copy and run, and continues once you confirm.
+        </p>
+      </Doc>
+
+      <Doc id="browser" title="Browser &amp; UI debugging">
+        <p>
+          With the optional <code>browser</code> extra installed (<code>uv sync --extra
+          browser</code> plus <code>browser-use install</code>; included in the Docker image), the
+          agent gets a real browser.
+        </p>
+        <ul>
+          <li>
+            <strong><code>browser_task</code></strong>: autonomous multi-step web work (filling
+            forms, extracting data). Returns the result and screenshots.
+          </li>
+          <li>
+            <strong>Debugging tools</strong>: <code>browser_open</code>,{' '}
+            <code>browser_screenshot</code>, <code>browser_get_content</code>,{' '}
+            <code>browser_click</code>, <code>browser_type</code>, <code>browser_eval</code>, and
+            <code>browser_close</code> operate on a persistent session per chat, so cookies and
+            page state survive between calls.
+          </li>
+          <li>
+            <strong>Local dev servers</strong>: localhost and private addresses are blocked by
+            default. Enable <em>Browser &rarr; Allow the browser to reach localhost</em> in the
+            project's About tab, then the agent can debug <code>http://localhost:5173</code> and
+            friends.
+          </li>
+          <li>
+            <strong>Your own Chrome</strong>: set a Browser CDP URL in Assistant settings (or
+            <code>HESTIA_BROWSER_CDP_URL</code>) to attach to a Chrome started with{' '}
+            <code>--remote-debugging-port=9222</code> and reuse your logins. Hestia disconnects
+            without closing it.
+          </li>
+          <li>
+            <strong>Image reader</strong>: assign a cheap vision model to the{' '}
+            <em>Read images</em> action and screenshots are automatically described in text for
+            the main agent, which then never pays vision tokens. The reader can look at the page
+            itself (read-only) and sees a compacted version of the conversation.
+          </li>
+        </ul>
+        <p>
+          Browsing is principal-only and can be disabled globally in Assistant settings or with
+          <code>HESTIA_BROWSER=0</code>.
         </p>
       </Doc>
 

@@ -26,7 +26,7 @@ from hestia import actions, notify, settings, totem_store, usage
 from hestia.agent import loop as agent_loop
 from hestia.agent.prompt import build_system_prompt
 from hestia.agent.run import run_once
-from hestia.providers.base import OpenAIClient, resolve_api_key
+from hestia.providers.base import provider_client, resolve_api_key
 from hestia.registry.db import engine
 from hestia.registry.models import (
     AgentConfig,
@@ -52,21 +52,21 @@ a task id immediately; keep working or stop and the owner will be notified.
 Use job_list and job_output to check progress, and job_stop to cancel. Do not
 poll in a loop: you will be woken with the result when it finishes."""
 
-ACTIVE_SESSIONS: set[int] = set()
+ACTIVE_SESSIONS: set[str] = set()
 _active_lock = threading.Lock()
 
 
-def mark_active(session_id: int) -> None:
+def mark_active(session_id: str) -> None:
     with _active_lock:
         ACTIVE_SESSIONS.add(session_id)
 
 
-def mark_idle(session_id: int) -> None:
+def mark_idle(session_id: str) -> None:
     with _active_lock:
         ACTIVE_SESSIONS.discard(session_id)
 
 
-def is_active(session_id: int) -> bool:
+def is_active(session_id: str) -> bool:
     with _active_lock:
         return session_id in ACTIVE_SESSIONS
 
@@ -85,7 +85,8 @@ def _agent_for(db: Session, key: str) -> AgentConfig | None:
 
 def _provider_for(db: Session, project: Project, agent: AgentConfig | None) -> Provider | None:
     provider_id = (agent.provider_id if agent else None) or project.default_provider_id
-    return db.get(Provider, provider_id) if provider_id else None
+    provider = db.get(Provider, provider_id) if provider_id else None
+    return actions.effective_provider(agent, provider)
 
 
 def as_dict(job: BackgroundTask) -> dict:
@@ -109,11 +110,12 @@ def as_dict(job: BackgroundTask) -> dict:
 def submit(
     *,
     project_id: int,
-    session_id: int | None,
+    session_id: str | None,
     kind: str,
     instruction: str,
     description: str,
     action: str = "chat",
+    payload: str = "{}",
 ) -> int:
     with Session(engine()) as db:
         job = BackgroundTask(
@@ -123,6 +125,7 @@ def submit(
             instruction=instruction,
             description=description or instruction[:80],
             action=action or "chat",
+            payload=payload,
         )
         db.add(job)
         db.commit()
@@ -217,10 +220,49 @@ class JobManager:
         await _deliver(job_id)
 
 
+async def _execute_swarm(
+    db: Session, job: BackgroundTask, project: Project
+) -> tuple[str, str | None, dict]:
+    from hestia.tools.subagents import run_swarm
+
+    try:
+        data = json.loads(job.payload or "{}")
+    except ValueError:
+        data = {}
+    tasks = data.get("tasks") or []
+    if not tasks:
+        return "", "swarm job has no tasks", {}
+    ctx = ProjectContext.from_project(project)
+    ctx.session_id = job.session_id
+    results = await asyncio.to_thread(
+        run_swarm,
+        ctx,
+        db,
+        str(data.get("directive") or ""),
+        tasks,
+        int(data.get("max_parallel") or 3),
+        data.get("write_scope") or None,
+    )
+    lines = []
+    failed = False
+    for r in results:
+        ok = r.get("status") != "error"
+        failed = failed or not ok
+        lines.append(f"- [{'ok' if ok else 'error'}] {r.get('agent', '?')}: "
+                     f"{(r.get('summary') or r.get('error') or '').strip()[:400]}")
+    # Include the structured roster so the UI can rebuild the swarm card.
+    lines.append("")
+    lines.append("<agent_swarm_result>" + json.dumps(results) + "</agent_swarm_result>")
+    return "\n".join(lines), ("some swarm tasks failed" if failed else None), {}
+
+
 async def _execute_job(
     db: Session, job: BackgroundTask, project: Project
 ) -> tuple[str, str | None, dict]:
-    from hestia.tools.subagents import SUBAGENT_PROMPT
+    from hestia.tools.subagents import SUBAGENT_PROMPT, subagent_system
+
+    if job.kind == "swarm":
+        return await _execute_swarm(db, job, project)
 
     agent = _agent_for(db, job.action or "chat")
     provider = _provider_for(db, project, agent)
@@ -229,12 +271,24 @@ async def _execute_job(
     ctx = ProjectContext.from_project(project)
     ctx.session_id = job.session_id
     instruction = job.instruction or job.description or "Do the background task."
+    try:
+        job_payload = json.loads(job.payload or "{}")
+    except ValueError:
+        job_payload = {}
+    write_scope = job_payload.get("write_scope") or None
 
+    mode = None
     if job.kind == "subagent":
-        system = f"{SUBAGENT_PROMPT}\n\n## Agent instructions\n{agent.system_prompt if agent else ''}"
-        groups = agent.tools if agent else "repo,files"
+        if agent:
+            system = subagent_system(agent)
+            groups = agent.tools
+            mode = agent.mode or "read"
+        else:
+            system = SUBAGENT_PROMPT
+            groups = "repo,files"
+            mode = "read"
     else:
-        digest = totem_store.digest(ctx.local_path, task=instruction)
+        digest = totem_store.digest(ctx.memory_path, task=instruction)
         system = build_system_prompt(
             ctx,
             agents_md=project.agents_md,
@@ -256,9 +310,11 @@ async def _execute_job(
         system,
         instruction,
         groups=groups,
-        max_turns=agent.max_turns if agent else 10,
+        max_turns=None,
         tasks_db=db,
         writes=bool(project.allow_git_writes),
+        mode=mode,
+        write_allowlist=tuple(write_scope) if write_scope else None,
     )
     usage.record(
         db,
@@ -338,7 +394,7 @@ async def _deliver(job_id: int) -> None:
         await _continue(session_id, project_id)
 
 
-def _replay(db: Session, session_id: int, system: str) -> list[dict]:
+def _replay(db: Session, session_id: str, system: str) -> list[dict]:
     rows = db.exec(
         select(Message).where(Message.session_id == session_id).order_by(Message.id)
     ).all()
@@ -366,7 +422,7 @@ def _replay(db: Session, session_id: int, system: str) -> list[dict]:
     return messages
 
 
-async def _continue(session_id: int, project_id: int) -> None:
+async def _continue(session_id: str, project_id: int) -> None:
     if is_active(session_id):
         return
     mark_active(session_id)
@@ -383,7 +439,7 @@ async def _continue(session_id: int, project_id: int) -> None:
             ctx = ProjectContext.from_project(project)
             ctx.session_id = session_id
             digest = totem_store.digest(
-                ctx.local_path, task="Continue after a background task"
+                ctx.memory_path, task="Continue after a background task"
             )
             system = build_system_prompt(
                 ctx,
@@ -396,13 +452,16 @@ async def _continue(session_id: int, project_id: int) -> None:
                 system += f"\n\n## Agent instructions\n{agent.system_prompt}"
             system += "\n\n" + BACKGROUND_NOTE
             registry = build_registry(writes=bool(project.allow_git_writes), db=db)
-            client = OpenAIClient(
-                provider.base_url, resolve_api_key(provider), provider.model
+            client = provider_client(
+                provider,
+                provider.model,
+                db=db,
+                reasoning_effort=getattr(provider, "reasoning_effort", None),
             )
             messages = _replay(db, session_id, system)
             final = ""
             async for event in agent_loop.run_turn(
-                ctx, client, registry, messages, max_turns=agent.max_turns if agent else 8
+                ctx, client, registry, messages
             ):
                 if event["type"] == "message":
                     final = event.get("content", "")

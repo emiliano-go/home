@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from hestia import config
+from hestia import config, urls
 
 
 class InvalidSource(ValueError):
@@ -140,7 +140,7 @@ def _fetch_git(repo: str, subpath: str | None, workdir: Path) -> tuple[Path, str
     subpath = subpath or frag or None
     cmd = ["git"]
     token = config.github_token()
-    if token and "github.com" in repo:
+    if token and urls.github_host(repo):
         cmd += ["-c", f"http.extraheader=Authorization: Bearer {token}"]
     dest = workdir / "src"
     cmd += ["clone", "--depth", "1", "--", repo, str(dest)]

@@ -15,7 +15,7 @@ export const WELCOME_SUGGESTIONS = [
   'Draft a plan for a new feature',
 ]
 
-export function Stat({ icon, label, value, tone, onClick }) {
+export function Stat({ icon, label, value, tone, onClick, sub }) {
   const Tag = onClick ? 'button' : 'div'
   return (
     <Tag
@@ -27,7 +27,10 @@ export function Stat({ icon, label, value, tone, onClick }) {
         <Icon name={icon} size={14} className="stat-icon" />
         <span className="stat-label">{label}</span>
       </span>
-      <span className="stat-value">{value}</span>
+      <span className="stat-value-wrap">
+        <span className="stat-value">{value}</span>
+        {sub && <span className="stat-sub">{sub}</span>}
+      </span>
       {onClick && <Icon name="chevronRight" size={14} className="stat-arrow" />}
     </Tag>
   )
@@ -111,12 +114,21 @@ export function GitDetail({ id, git }) {
   if (id === 'commit') {
     const c = git.last_commit
     if (!c) return <p className="muted">No commits yet.</p>
+    const r = git.remote?.last_commit
     return (
       <>
-        <DetailRow label="Subject" value={c.subject} />
-        <DetailRow label="SHA" value={c.sha} />
+        <DetailRow label="Local subject" value={c.subject} />
+        <DetailRow label="Local SHA" value={c.sha} />
         <DetailRow label="Author" value={c.author} />
         <DetailRow label="Date" value={relDate(c.date)} />
+        {r && (
+          <>
+            <DetailRow label="Remote" value={git.remote.ref} />
+            <DetailRow label="Remote subject" value={r.subject} />
+            <DetailRow label="Remote SHA" value={r.sha} />
+            <DetailRow label="Remote date" value={relDate(r.date)} />
+          </>
+        )}
       </>
     )
   }
@@ -232,7 +244,7 @@ export function OverviewDetailModal({ detail, project, git, usage, github, onSta
   )
 }
 
-export function ProjectOverviewView({ project, since, onStart, onNavigate, onOpenSettings }) {
+export function ProjectOverviewView({ project, since, onStart, onNavigate, onOpenSettings, onOpenSession }) {
   const ready = since !== undefined
   const { data, error, loading } = useAsync(
     () => (ready ? api.projectStatus(project.id, since || undefined) : Promise.resolve(null)),
@@ -240,9 +252,28 @@ export function ProjectOverviewView({ project, since, onStart, onNavigate, onOpe
   )
   const usageReq = useAsync(() => api.projectUsage(project.id), [project.id])
   const usage = usageReq.data
+  const sessionsReq = useAsync(() => api.listSessions(project.id), [project.id])
+  const lastSession = (sessionsReq.data || [])
+    .slice()
+    .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))[0]
   const firstVisit = since === null
   const git = data?.git
+  const remoteCommit = git?.remote?.last_commit
+  const remoteSub = remoteCommit
+    ? `${git.behind > 0 ? `${git.behind} behind · ` : ''}remote: ${truncate(remoteCommit.subject, 40)}`
+    : undefined
   const github = data?.github
+  const repoEntries = data?.repos || []
+  const multi = repoEntries.length > 1
+  const githubStats = multi
+    ? {
+        available: repoEntries.some((r) => r.github?.available),
+        open_prs: repoEntries.reduce((n, r) => n + (r.github?.open_prs || 0), 0),
+        open_issues: repoEntries.reduce((n, r) => n + (r.github?.open_issues || 0), 0),
+        failing_runs: repoEntries.reduce((n, r) => n + (r.github?.failing_runs || 0), 0),
+        latest_run: github?.latest_run,
+      }
+    : github
   const tasks = data?.tasks
   const changes = data?.changes
   const [detail, setDetail] = useState(null)
@@ -313,7 +344,20 @@ export function ProjectOverviewView({ project, since, onStart, onNavigate, onOpe
           <h1>{project.name}</h1>
           <div className="repo">
             <Icon name="git" size={13} />
-            <code>{project.repo_url}</code>
+            {project.repo_url ? (
+              <code>{project.repo_url}</code>
+            ) : (
+              <span className="muted">workspace-only project</span>
+            )}
+            {multi && (
+              <button
+                type="button"
+                className="badge clickable"
+                onClick={() => onNavigate({ type: 'repos' })}
+              >
+                {repoEntries.length} repositories
+              </button>
+            )}
           </div>
         </div>
         <button className="btn" onClick={() => onNavigate({ type: 'tasks' })}>
@@ -341,6 +385,7 @@ export function ProjectOverviewView({ project, since, onStart, onNavigate, onOpe
             icon="git"
             label="Last commit"
             value={truncate(git?.last_commit?.subject, 42) || 'none'}
+            sub={remoteSub}
             onClick={() => setDetail({ id: 'commit', title: 'Last commit' })}
           />
           <Stat
@@ -367,36 +412,44 @@ export function ProjectOverviewView({ project, since, onStart, onNavigate, onOpe
             value={usage ? fmtTokens(usage.total.tokens) : '-'}
             onClick={() => setDetail({ id: 'tokens', title: 'Token usage' })}
           />
-          {github?.available ? (
+          {multi && (
+            <Stat
+              icon="git"
+              label="Repositories"
+              value={repoEntries.length}
+              onClick={() => onNavigate({ type: 'repos' })}
+            />
+          )}
+          {githubStats?.available ? (
             <>
               <Stat
                 icon="git"
-                label="Open PRs"
-                value={github.open_prs}
+                label={multi ? 'Open PRs (all)' : 'Open PRs'}
+                value={githubStats.open_prs}
                 onClick={() => setDetail({ id: 'prs', title: 'Open pull requests' })}
               />
               <Stat
                 icon="chat"
-                label="Open issues"
-                value={github.open_issues}
+                label={multi ? 'Open issues (all)' : 'Open issues'}
+                value={githubStats.open_issues}
                 onClick={() => setDetail({ id: 'issues', title: 'Open issues' })}
               />
               <Stat
                 icon="alert"
-                label="Failing runs"
-                value={github.failing_runs}
-                tone={github.failing_runs ? 'err' : 'ok'}
+                label={multi ? 'Failing runs (all)' : 'Failing runs'}
+                value={githubStats.failing_runs}
+                tone={githubStats.failing_runs ? 'err' : ''}
                 onClick={() => setDetail({ id: 'runs', title: 'CI runs' })}
               />
               <Stat
                 icon="play"
                 label="Latest CI"
                 value={
-                  github.latest_run
-                    ? github.latest_run.conclusion || github.latest_run.status
+                  githubStats.latest_run
+                    ? githubStats.latest_run.conclusion || githubStats.latest_run.status
                     : 'none'
                 }
-                tone={runTone(github.latest_run)}
+                tone={runTone(githubStats.latest_run)}
                 onClick={() => setDetail({ id: 'ci', title: 'Latest CI run' })}
               />
             </>
@@ -411,13 +464,54 @@ export function ProjectOverviewView({ project, since, onStart, onNavigate, onOpe
         </div>
       )}
 
+      <button
+        type="button"
+        className={`digest clickable conversation-card ${lastSession ? '' : 'empty'}`}
+        onClick={() => lastSession && onOpenSession && onOpenSession(lastSession.id)}
+        disabled={!lastSession}
+      >
+        <span className="digest-head">
+          <Icon name="chat" size={16} />
+          <span>Last conversation</span>
+        </span>
+        <span className="digest-chips">
+          <span className="digest-chip">
+            {lastSession ? truncate(lastSession.title, 60) : 'No conversations yet'}
+          </span>
+          {lastSession && <span className="digest-chip">{relDate(lastSession.updated_at)}</span>}
+        </span>
+        {lastSession && <Icon name="chevronRight" size={16} className="digest-arrow" />}
+      </button>
+
+      {multi && (
+        <div className="repo-table">
+          {repoEntries.map((r) => (
+            <button
+              key={r.alias}
+              type="button"
+              className="repo-line clickable"
+              onClick={() => onNavigate({ type: 'repos' })}
+            >
+              <span className="badge accent">{r.alias}</span>
+              <span>{r.git?.branch || '—'}</span>
+              <span className="muted">{truncate(r.git?.last_commit?.subject, 46) || 'no commits'}</span>
+              <span className="muted">
+                {r.github?.available
+                  ? `${r.github.open_prs} PR · ${r.github.open_issues} issues · ${r.github.failing_runs} failing`
+                  : '—'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {detail && (
         <OverviewDetailModal
           detail={detail}
           project={project}
           git={git}
           usage={usage}
-          github={github}
+          github={githubStats}
           onStart={onStart}
           onClose={() => setDetail(null)}
           onOpenSettings={onOpenSettings}

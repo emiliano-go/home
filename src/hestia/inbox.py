@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from hestia import events, notify, overview
+from hestia import events, notify, overview, repos
 from hestia.registry.models import InboxItem, Project
 
 _KINDS = ("pr", "issue", "run")
@@ -34,6 +34,7 @@ def _add(
     subtitle: str,
     url: str | None,
     baseline: bool,
+    repo: str = "",
 ) -> InboxItem | None:
     exists = db.exec(
         select(InboxItem).where(
@@ -48,6 +49,7 @@ def _add(
         project_id=project_id,
         kind=kind,
         external_id=external_id,
+        repo=repo,
         title=title,
         subtitle=subtitle,
         url=url,
@@ -72,18 +74,14 @@ def _notify_new_items(project: Project, items: list[InboxItem]) -> None:
 
 
 def poll_project(db: Session, project: Project) -> tuple[int, list[InboxItem]]:
-    """Fetch open PRs/issues and failing runs; insert unseen ones.
+    """Fetch open PRs/issues and failing runs from every repo; insert unseen ones.
 
     Returns (created count, newly added unread items).
     """
-    if not overview.repo_slug(project.repo_url):
+    rows = repos.repos_for(db, project.id)
+    if not rows:
         return 0, []
-    prs = overview.github_list(project, "prs", state="open", limit=30)
-    if not prs.get("available"):
-        return 0, []
-    issues = overview.github_list(project, "issues", state="open", limit=30)
-    runs = overview.github_list(project, "runs", limit=15)
-
+    multi = len(rows) > 1
     baseline = not _has_items(db, project.id)
     created = 0
     new_unread: list[InboxItem] = []
@@ -103,47 +101,60 @@ def poll_project(db: Session, project: Project) -> tuple[int, list[InboxItem]]:
                 key=item.external_id,
             )
 
-    for pr in prs.get("items", []):
-        track(
-            _add(
-                db,
-                project.id,
-                "pr",
-                f"pr:{pr['number']}",
-                f"#{pr['number']} {pr['title']}",
-                f"Pull request · {pr.get('user') or 'unknown'}",
-                pr.get("url"),
-                baseline,
-            )
-        )
-    for issue in issues.get("items", []):
-        track(
-            _add(
-                db,
-                project.id,
-                "issue",
-                f"issue:{issue['number']}",
-                f"#{issue['number']} {issue['title']}",
-                f"Issue · {issue.get('user') or 'unknown'}",
-                issue.get("url"),
-                baseline,
-            )
-        )
-    for run in runs.get("items", []):
-        if run.get("conclusion") != "failure":
+    for row in rows:
+        if not overview.repo_slug(row.repo_url):
             continue
-        track(
-            _add(
-                db,
-                project.id,
-                "run",
-                f"run:{run.get('id')}",
-                run.get("name") or "CI run",
-                "CI failure",
-                run.get("url"),
-                baseline,
+        prs = overview.github_list_for_url(row.repo_url, "prs", state="open", limit=30)
+        if not prs.get("available"):
+            continue
+        issues = overview.github_list_for_url(row.repo_url, "issues", state="open", limit=30)
+        runs = overview.github_list_for_url(row.repo_url, "runs", limit=15)
+        prefix = f"{row.alias}:" if multi else ""
+        suffix = f" · {row.alias}" if multi else ""
+        for pr in prs.get("items", []):
+            track(
+                _add(
+                    db,
+                    project.id,
+                    "pr",
+                    f"{prefix}pr:{pr['number']}",
+                    f"#{pr['number']} {pr['title']}",
+                    f"Pull request · {pr.get('user') or 'unknown'}{suffix}",
+                    pr.get("url"),
+                    baseline,
+                    row.alias,
+                )
             )
-        )
+        for issue in issues.get("items", []):
+            track(
+                _add(
+                    db,
+                    project.id,
+                    "issue",
+                    f"{prefix}issue:{issue['number']}",
+                    f"#{issue['number']} {issue['title']}",
+                    f"Issue · {issue.get('user') or 'unknown'}{suffix}",
+                    issue.get("url"),
+                    baseline,
+                    row.alias,
+                )
+            )
+        for run in runs.get("items", []):
+            if run.get("conclusion") != "failure":
+                continue
+            track(
+                _add(
+                    db,
+                    project.id,
+                    "run",
+                    f"{prefix}run:{run.get('id')}",
+                    run.get("name") or "CI run",
+                    f"CI failure{suffix}",
+                    run.get("url"),
+                    baseline,
+                    row.alias,
+                )
+            )
     if created:
         db.commit()
     return created, new_unread
@@ -164,45 +175,63 @@ def poll_all(db: Session) -> int:
 
 
 def check_pulls(db: Session) -> int:
-    """Surface a "Pull pending" inbox item per project behind its remote.
+    """Surface a "Pull pending" inbox item per repo behind its remote.
 
-    Fetches first, so it reflects the real remote state. The item is removed
+    Fetches first, so it reflects the real remote state. Items are removed
     once the clone catches up (or after a pull).
     """
     count = 0
     for project in db.exec(select(Project)).all():
-        try:
-            pending = overview.pending_pull(Path(project.local_path), do_fetch=True)
-        except Exception:
-            continue  # missing path, no upstream, no network
-        item = db.exec(
+        rows = repos.repos_for(db, project.id)
+        multi = len(rows) > 1
+        active: set[str] = set()
+        for row in rows:
+            ext = f"pull:{row.alias}" if multi else "pull"
+            try:
+                pending = overview.pending_pull(Path(row.local_path), do_fetch=True)
+            except Exception:
+                pending = None  # missing path, no upstream, no network
+            item = db.exec(
+                select(InboxItem).where(
+                    InboxItem.project_id == project.id,
+                    InboxItem.kind == "pull",
+                    InboxItem.external_id == ext,
+                )
+            ).first()
+            if pending:
+                active.add(ext)
+                subtitle = f"{pending['behind']} commit(s) behind origin/{pending['branch']}"
+                if multi:
+                    subtitle = f"{row.alias}: {subtitle}"
+                if item is None:
+                    item = InboxItem(
+                        project_id=project.id,
+                        kind="pull",
+                        external_id=ext,
+                        repo=row.alias,
+                        title="Pull pending",
+                        subtitle=subtitle,
+                        read=False,
+                    )
+                    db.add(item)
+                    db.commit()
+                    db.refresh(item)
+                    count += 1
+                    label = f"{project.name} · {row.alias}" if multi else project.name
+                    notify.send(f"Pull pending · {label}", subtitle, tags=["arrow_down"])
+                elif item.subtitle != subtitle:
+                    item.subtitle = subtitle
+                    db.add(item)
+                    db.commit()
+        # drop stale pull items (repo removed, or clone caught up)
+        for item in db.exec(
             select(InboxItem).where(
                 InboxItem.project_id == project.id, InboxItem.kind == "pull"
             )
-        ).first()
-        if pending:
-            subtitle = f"{pending['behind']} commit(s) behind origin/{pending['branch']}"
-            if item is None:
-                item = InboxItem(
-                    project_id=project.id,
-                    kind="pull",
-                    external_id="pull",
-                    title="Pull pending",
-                    subtitle=subtitle,
-                    read=False,
-                )
-                db.add(item)
+        ).all():
+            if item.external_id not in active:
+                db.delete(item)
                 db.commit()
-                db.refresh(item)
-                count += 1
-                notify.send(f"Pull pending · {project.name}", subtitle, tags=["arrow_down"])
-            elif item.subtitle != subtitle:
-                item.subtitle = subtitle
-                db.add(item)
-                db.commit()
-        elif item is not None:
-            db.delete(item)
-            db.commit()
     return count
 
 

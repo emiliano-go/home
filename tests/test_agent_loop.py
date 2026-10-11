@@ -16,10 +16,14 @@ class FakeClient(OpenAIClient):
     def __init__(self, script):
         super().__init__("http://fake", None, "fake")
         self.script = list(script)
+        self.calls = []
 
     async def stream_chat(self, messages, tools=None):
+        self.calls.append(messages)
         reply = self.script.pop(0) if self.script else {"content": "done"}
         chunks = []
+        if reply.get("reasoning"):
+            chunks.append({"choices": [{"delta": {"reasoning_content": reply["reasoning"]}}]})
         if reply.get("tool_calls"):
             for i, tc in enumerate(reply["tool_calls"]):
                 chunks.append({"choices": [{"delta": {"tool_calls": [dict(index=i, id=tc["id"], function={"name": tc["name"], "arguments": ""})]}}]})
@@ -60,6 +64,23 @@ async def test_tool_call_loop(repo):
     # tokens stream before the final message of each turn
     token_events = [e for e in events if e["type"] == "token"]
     assert token_events and "".join(t["text"] for t in token_events).strip().endswith("sqlite.")
+
+
+@pytest.mark.asyncio
+async def test_reasoning_content_is_echoed_back(repo):
+    client = FakeClient([
+        {"reasoning": "I should read it first",
+         "tool_calls": [{"id": "c1", "name": "read_agents_md", "arguments": "{}"}]},
+        {"content": "done"},
+    ])
+    registry = build_registry()
+    events = [e async for e in agent_loop.run_turn(repo, client, registry, [{"role": "user", "content": "hi"}])]
+    thinking = [e for e in events if e["type"] == "thinking"]
+    assert thinking and thinking[0]["text"] == "I should read it first"
+    # The provider requires reasoning_content echoed on the assistant message.
+    second_call = client.calls[1]
+    assistant = [m for m in second_call if m.get("role") == "assistant"][-1]
+    assert assistant["reasoning_content"] == "I should read it first"
 
 
 @pytest.mark.asyncio

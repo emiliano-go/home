@@ -9,7 +9,9 @@ export function Skeleton({ className = '', style }) {
   return <div className={`skeleton ${className}`} style={style} aria-hidden="true" />
 }
 
-export function Composer({ onSend, busy, placeholder }) {
+const isBtw = (msg) => /^\/btw(\s|$)/i.test(msg)
+
+export function Composer({ onSend, busy, placeholder, hint, onStop, trailing }) {
   const [value, setValue] = useState('')
   const ref = useRef(null)
 
@@ -23,22 +25,27 @@ export function Composer({ onSend, busy, placeholder }) {
 
   const submit = () => {
     const msg = value.trim()
-    if (!msg || busy) return
+    if (!msg) return
+    if (busy && !isBtw(msg)) return
     setValue('')
     onSend(msg)
   }
 
+  const command = value.match(/^\/[a-z-]+/i)
+  const highlighting = !!command
+
   return (
-    <div
-      className="composer"
-      onClick={(e) => {
-        if (e.target.closest('button')) return
-        ref.current?.focus()
-      }}
-    >
-      <div className="composer-row">
+    <div className="composer">
+      <div className={`composer-input ${highlighting ? 'highlighting' : ''}`}>
+        {highlighting && (
+          <div className="composer-mirror" aria-hidden="true">
+            <span className="composer-cmd">{command[0]}</span>
+            {value.slice(command[0].length)}
+          </div>
+        )}
         <textarea
           ref={ref}
+          className={highlighting ? 'ghost' : ''}
           rows={1}
           value={value}
           placeholder={placeholder}
@@ -50,17 +57,28 @@ export function Composer({ onSend, busy, placeholder }) {
             }
           }}
         />
-        <button
-          className="send-btn"
-          onClick={submit}
-          disabled={busy || !value.trim()}
-          title="Send"
-        >
-          <Icon name="arrowUp" size={18} />
-        </button>
       </div>
       <div className="composer-foot">
-        <span className="composer-hint">Enter to send, Shift+Enter for a new line</span>
+        <span className="composer-hint">
+          {hint || 'Enter to send, Shift+Enter for a new line'}
+        </span>
+        <span className="composer-actions">
+          {trailing}
+          {busy ? (
+            <button type="button" className="send-btn stop" onClick={onStop} title="Stop">
+              <Icon name="stop" size={16} />
+            </button>
+          ) : (
+            <button
+              className="send-btn"
+              onClick={submit}
+              disabled={!value.trim()}
+              title="Send"
+            >
+              <Icon name="arrowUp" size={18} />
+            </button>
+          )}
+        </span>
       </div>
     </div>
   )

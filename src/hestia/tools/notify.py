@@ -47,4 +47,5 @@ def register(registry: Registry) -> None:
         ),
         handler=handler,
         group="notify",
+        effect="write",
     ))

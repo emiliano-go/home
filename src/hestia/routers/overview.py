@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from hestia import overview, usage
+from hestia import overview, repos, usage
 from hestia.registry.db import session
 from hestia.registry.models import Project, Task
 
@@ -32,11 +32,28 @@ def _task_counts(project_id: int, s: Session) -> dict:
 def status(project_id: int, since: str | None = None, s: Session = Depends(session)):
     project = _project_or_404(project_id, s)
     since_dt = overview._parse_dt(since) if since else project.last_opened_at
-    github = overview.github_summary(project, since_dt)
-    changes = overview.since_changes(project, since_dt, github)
+    entries = []
+    for row in repos.repos_for(s, project.id):
+        entries.append(
+            {
+                "alias": row.alias,
+                "repo_url": row.repo_url,
+                "local_path": row.local_path,
+                "is_primary": row.is_primary,
+                "git": overview.git_summary(Path(row.local_path)),
+                "github": overview.github_summary_for_url(row.repo_url, since_dt),
+            }
+        )
+    head = next((e for e in entries if e["is_primary"]), entries[0] if entries else None)
+    git = head["git"] if head else {"branch": None, "head": None, "last_commit": None, "ahead": 0, "behind": 0, "dirty": False}
+    github = head["github"] if head else {"available": False, "repo": None, "reason": "no repositories"}
+    changes = overview.since_changes(
+        project, since_dt, github, repo_paths=[Path(e["local_path"]) for e in entries]
+    )
     return {
-        "git": overview.git_summary(Path(project.local_path)),
+        "git": git,
         "github": github,
+        "repos": entries,
         "since": overview._iso(since_dt),
         "changes": changes,
         "tasks": _task_counts(project_id, s),
@@ -69,11 +86,75 @@ def github_list(
     kind: str = "prs",
     state: str = "open",
     limit: int = 30,
+    repo: str | None = None,
     s: Session = Depends(session),
 ):
     if kind not in ("prs", "issues", "runs"):
         raise HTTPException(400, "kind must be prs, issues, or runs")
     project = _project_or_404(project_id, s)
-    return overview.github_list(
-        project, kind, state=state, limit=max(1, min(limit, 100))
+    rows = repos.repos_for(s, project.id)
+    if repo:
+        rows = [r for r in rows if r.alias == repo]
+        if not rows:
+            raise HTTPException(404, f"unknown repo alias: {repo}")
+    if not rows:
+        return {"available": False, "repo": None, "items": [], "error": "no repositories"}
+    row = next((r for r in rows if r.is_primary), rows[0])
+    result = overview.github_list_for_url(
+        row.repo_url, kind, state=state, limit=max(1, min(limit, 100))
     )
+    result["alias"] = row.alias
+    return result
+
+
+@router.post("/{project_id}/github/merge")
+def merge_pr(project_id: int, body: dict, s: Session = Depends(session)):
+    """Merge a pull request (owner-initiated; agent merges go through approval)."""
+    import httpx
+
+    from hestia import config
+
+    project = _project_or_404(project_id, s)
+    number = body.get("number")
+    if not number:
+        raise HTTPException(400, "number is required")
+    method = str(body.get("method") or "squash").lower()
+    if method not in ("squash", "merge", "rebase"):
+        raise HTTPException(400, "method must be squash, merge, or rebase")
+    rows = repos.repos_for(s, project.id)
+    alias = (body.get("repo") or "").strip() or None
+    if alias:
+        rows = [r for r in rows if r.alias == alias]
+        if not rows:
+            raise HTTPException(404, f"unknown repo alias: {alias}")
+    if not rows:
+        raise HTTPException(400, "project has no repositories")
+    row = next((r for r in rows if r.is_primary), rows[0])
+    slug = overview.repo_slug(row.repo_url)
+    if not slug:
+        raise HTTPException(400, "this repository is not a GitHub repository")
+    token = config.github_token()
+    if not token:
+        raise HTTPException(400, "GITHUB_TOKEN is required to merge pull requests")
+    resp = httpx.put(
+        f"https://api.github.com/repos/{slug}/pulls/{int(number)}/merge",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Authorization": f"Bearer {token}",
+        },
+        json={"merge_method": method},
+        timeout=30,
+    )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(502, f"GitHub {resp.status_code}: {resp.text[:300]}")
+    data = resp.json()
+    if not data.get("merged"):
+        raise HTTPException(502, data.get("message") or "merge failed")
+    return {
+        "merged": True,
+        "number": int(number),
+        "repo": row.alias,
+        "sha": data.get("sha"),
+        "message": data.get("message"),
+    }

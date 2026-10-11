@@ -8,15 +8,17 @@ import { mdToHtml } from '../lib/markdown.js'
 export function FileReaderPane({ projectId, path, onClose }) {
   const [content, setContent] = useState(null)
   const [error, setError] = useState(null)
+  const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(path)
 
   useEffect(() => {
+    if (isImage) return
     setContent(null)
     setError(null)
     api
       .getWorkspaceFile(projectId, path)
       .then(setContent)
       .catch((e) => setError(e.message || String(e)))
-  }, [projectId, path])
+  }, [projectId, path, isImage])
 
   return (
     <div className="reader">
@@ -27,7 +29,16 @@ export function FileReaderPane({ projectId, path, onClose }) {
         </button>
       </div>
       {error && <p className="error-text">{error}</p>}
-      {content === null && !error && <p className="note">Loading...</p>}
+      {isImage && (
+        <div className="reader-body">
+          <img
+            src={`/api/projects/${projectId}/workspace/raw?path=${encodeURIComponent(path)}`}
+            alt={path}
+            style={{ maxWidth: '100%' }}
+          />
+        </div>
+      )}
+      {content === null && !error && !isImage && <p className="note">Loading...</p>}
       {content !== null &&
         (/\.(md|markdown)$/i.test(path) ? (
           <div className="reader-body prose" dangerouslySetInnerHTML={{ __html: mdToHtml(content) }} />
@@ -132,6 +143,14 @@ export function GalleryView() {
             onClick={() => setSelected(f)}
             style={{ cursor: 'pointer' }}
           >
+            {/\.(png|jpe?g|gif|webp)$/i.test(f.path) && (
+              <img
+                className="gallery-thumb"
+                src={`/api/projects/${f.project_id}/workspace/raw?path=${encodeURIComponent(f.path)}`}
+                alt=""
+                loading="lazy"
+              />
+            )}
             <h3>
               <span className="badge">{f.project}</span>
             </h3>
