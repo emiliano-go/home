@@ -143,6 +143,16 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, default=str)}\n\n"
 
 
+def _as_id(value) -> int | None:
+    """Coerce a JSON body id to int (the web UI sends select values as strings)."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _replay_messages(rows, system: str) -> list[dict]:
     messages: list[dict] = [{"role": "system", "content": system}]
     for m in rows:
@@ -714,17 +724,29 @@ async def chat(project_id: int, body: dict, s: Session = Depends(session)):
     ).strip()
     if action_key not in actions.ACTIONS_BY_KEY:
         action_key = "chat"
-    if body.get("agent_id"):
-        agent_config = s.get(AgentConfig, body["agent_id"])
+    explicit_agent_id = _as_id(body.get("agent_id"))
+    if explicit_agent_id is not None:
+        agent_config = s.get(AgentConfig, explicit_agent_id)
         if not agent_config:
             raise HTTPException(404, "agent profile not found")
     else:
         agent_config = actions.resolve_action(s, action_key)
-    if agent_config:
-        provider = s.get(Provider, agent_config.provider_id)
-    else:
-        provider_id = body.get("provider_id") or project.default_provider_id
-        provider = s.get(Provider, provider_id) if provider_id else None
+    # An explicitly chosen provider wins over the agent's own provider (the
+    # topbar lets the user pick a model even when a default agent exists);
+    # fall back through the agent's provider to the project default so a
+    # stale agent reference (e.g. deleted provider) never bricks the chat.
+    provider = None
+    for candidate in (
+        _as_id(body.get("provider_id")),
+        agent_config.provider_id if agent_config else None,
+        project.default_provider_id,
+    ):
+        candidate = _as_id(candidate)
+        if candidate is None:
+            continue
+        provider = s.get(Provider, candidate)
+        if provider is not None:
+            break
     provider = actions.effective_provider(agent_config, provider)
     if not provider:
         raise HTTPException(400, "no provider configured for this project")

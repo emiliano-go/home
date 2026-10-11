@@ -63,10 +63,11 @@ export function MemoryView({ projectId, providerId, onStart }) {
     setFixing(true)
     setFixError(null)
     setFixReport(null)
+    const pid = parseInt(providerId, 10)
     api
       .fixMemory(projectId, {
         instruction: instruction.trim(),
-        provider_id: providerId || undefined,
+        provider_id: Number.isFinite(pid) ? pid : undefined,
       })
       .then((r) => {
         setFixReport(r.report || '(no report)')

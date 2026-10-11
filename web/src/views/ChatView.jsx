@@ -223,6 +223,11 @@ export function ChatView({ projectId, sessionId, agentId, providerId, onSessionC
     api.stopRun(runId).catch((e) => setError(e.message || String(e)))
   }, [runId])
 
+  const toId = (v) => {
+    const n = parseInt(v, 10)
+    return Number.isFinite(n) ? n : undefined
+  }
+
   const send = useCallback(
     (text) => {
       const trimmed = text.trim()
@@ -254,7 +259,7 @@ export function ChatView({ projectId, sessionId, agentId, providerId, onSessionC
             message: text,
             session_id: sessionRef.current || undefined,
             action: action || undefined,
-            ...(agentId ? { agent_id: agentId } : { provider_id: providerId || undefined }),
+            ...(agentId ? { agent_id: toId(agentId) } : { provider_id: toId(providerId) }),
           },
           {
             onStatus: (s) => gen === streamGenRef.current && setReconnecting(s === 'reconnecting'),
